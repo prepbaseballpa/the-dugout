@@ -8,14 +8,14 @@
 main{max-width:640px;margin:40px auto;padding:0 16px}
 .card{background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--red);border-radius:6px;padding:22px}
 h1{margin:0 0 6px;font-size:1.5rem}p{color:var(--muted)}
-button,input{font:inherit}button{padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
+button,input{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink)}button{padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);cursor:pointer}
 button.primary{background:var(--red);border-color:var(--red);color:#fff}button:disabled{opacity:.5;cursor:not-allowed}
 pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;max-height:320px;overflow:auto;white-space:pre-wrap;font-size:.82rem}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
 </style></head><body><main><div class="card">
 <h1>The Dugout · Data import</h1>
 <p>One-time move of data from the Claude version. Owners only. Choose the <b>dugout-export.json</b> file Claude gave you. Records with the same ID are overwritten; nothing else is deleted.</p>
-<div class="row"><button id="signin" class="primary" type="button">Sign in with Google</button><span id="who"></span></div>
+<form class="row" id="lf"><input type="email" id="em" placeholder="Owner email" required autocomplete="username"><input type="password" id="pw" placeholder="Password" required autocomplete="current-password"><button id="signin" class="primary" type="submit">Sign in</button><span id="who"></span></form>
 <div class="row"><input type="file" id="file" accept=".json,application/json" disabled><button id="go" class="primary" type="button" disabled>Import</button></div>
 <pre id="log">Waiting for sign-in…</pre>
 <p><a href="./">Back to The Dugout</a></p>
@@ -30,7 +30,7 @@ const C=window.DUGOUT_CONFIG||{}, log=document.getElementById("log"), say=t=>{lo
 if(!C.firebase||!C.firebase.apiKey){log.textContent="config.js has no Firebase settings yet.";return}
 firebase.initializeApp(C.firebase);const auth=firebase.auth(), db=firebase.firestore();
 const owners=(C.owners||[]).map(x=>x.toLowerCase());
-document.getElementById("signin").onclick=()=>auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+document.getElementById("lf").onsubmit=ev=>{ev.preventDefault();auth.signInWithEmailAndPassword(document.getElementById("em").value.trim(),document.getElementById("pw").value).catch(e=>{log.textContent="Sign-in failed: "+(e.message||e)})};
 const file=document.getElementById("file"), go=document.getElementById("go");
 auth.onAuthStateChanged(u=>{
   if(!u)return;const e=(u.email||"").toLowerCase();document.getElementById("who").textContent=e;

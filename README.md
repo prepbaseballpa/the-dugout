@@ -3,11 +3,11 @@
 Staff operations app: events, KPIs, 2027 forecast, staff, schedule, tasks, rankings, prospects and scouting notes.
 
 - **Hosting:** GitHub Pages (this repo, `main` branch, root folder)
-- **Sign-in and data:** Firebase (Google sign-in, Firestore database, Storage for videos and photos)
+- **Sign-in and data:** Firebase (email + password logins created by the owner, Firestore database, Storage for videos and photos)
 
 ## Who can get in
 
-Only Google accounts whose email appears on the **Staff** tab with Access set to **Full** or **Partial**. Owners listed in `config.js` and `firestore.rules` always have Full access.
+Only logins (created in Firebase → Authentication → Users) whose email appears on the **Staff** tab with Access set to **Full** or **Partial**. Owners listed in `config.js` and `firestore.rules` always have Full access.
 
 | Access | Sees |
 |---|---|
@@ -30,9 +30,9 @@ Never commit data exports to this repo.
 
 ## One-time setup checklist
 
-1. Firebase project with Google sign-in, Firestore (production mode) and optionally Storage.
+1. Firebase project with **Email/Password** sign-in, public sign-up turned **off** (Authentication → Settings → User actions), Firestore (production mode) and optionally Storage.
 2. Paste the web app's `firebaseConfig` into `config.js`.
 3. Publish `firestore.rules` (and `storage.rules` if Storage is on) in the Firebase console.
-4. Firebase console → Authentication → Settings → **Authorized domains** → add `prepbaseballpa.github.io`.
+4. Firebase console → Authentication → Settings → **Authorized domains** → add `prepbaseballpa.github.io`. Create your own login under Authentication → Users → Add user.
 5. GitHub repo → Settings → Pages → Deploy from branch → `main` / root.
 6. Open `https://prepbaseballpa.github.io/the-dugout/import.html`, sign in as an owner, and import `dugout-export.json`.

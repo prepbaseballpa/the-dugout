@@ -1,10 +1,11 @@
 rules_version = '2';
 // The Dugout — Firestore security rules.
+// Logins are email + password accounts created by the owner in Firebase (public sign-up must be turned off).
 // Paste into Firebase console → Firestore Database → Rules, then Publish.
 service cloud.firestore {
   match /databases/{database}/documents {
     function email() { return request.auth.token.email.lower(); }
-    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function signedIn() { return request.auth != null && request.auth.token.email is string; }
     // Owners always have Full access. Keep in sync with owners in config.js.
     function isOwner() { return signedIn() && email() in ['ocker@prepbaseball.com']; }
     function accessDoc() { return /databases/$(database)/documents/access/$(email()); }

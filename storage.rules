@@ -2,7 +2,7 @@ rules_version = '2';
 // The Dugout — Storage rules (videos and photos). Paste into Firebase console → Storage → Rules.
 service firebase.storage {
   match /b/{bucket}/o {
-    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function signedIn() { return request.auth != null && request.auth.token.email is string; }
     function isStaff() {
       return signedIn() && (request.auth.token.email.lower() in ['ocker@prepbaseball.com']
         || firestore.exists(/databases/(default)/documents/access/$(request.auth.token.email.lower())));

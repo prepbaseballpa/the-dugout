@@ -267,8 +267,12 @@ tr.mhead span{color:var(--band-muted);font-family:var(--f-data);font-size:.78rem
 .gate{max-width:440px;margin:60px auto;background:var(--surface);border:1px solid var(--line);border-top:4px solid var(--red);border-radius:var(--r);padding:28px 26px;text-align:center}
 .gate h2{font-family:var(--f-display);text-transform:uppercase;letter-spacing:.04em;margin:0 0 8px;font-size:1.6rem}
 .gate p{color:var(--muted);margin:0 0 18px}
-.gbtn{display:inline-flex;align-items:center;gap:10px;font-size:1rem;padding:10px 18px;background:#fff;color:#1f1f1f;border:1px solid #747775;border-radius:999px}
-.gbtn svg{width:18px;height:18px}
+.login{display:flex;flex-direction:column;gap:10px;text-align:left}
+.login label{display:flex;flex-direction:column;gap:4px;font-size:.78rem;font-weight:600;color:var(--muted)}
+.login input{font-size:1rem;padding:9px 10px}
+.login button.primary{padding:10px;font-size:1rem}
+.login .msg{font-size:.85rem;min-height:1.2em;margin:0}.login .msg.err{color:var(--bad)}
+.linkish{background:none;border:0;padding:0;color:var(--red);font-weight:600;font-size:.85rem;cursor:pointer;align-self:flex-start}
 .signout{background:transparent;border:1px solid rgba(255,255,255,.25);color:var(--band-muted);border-radius:999px;padding:3px 10px;font-size:.75rem}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -753,9 +757,9 @@ function vStaff(){
      <td>${evs.length?evs.map(e=>`<span class="chip acc" style="margin:1px 2px 1px 0">${esc(e.name)}</span>`).join(""):'<span class="muted">No upcoming events</span>'}</td>
      <td class="num">${open}</td>${showAcc?`<td>${accChip(s.access)}</td>`:""}</tr>`}).join("");
   const howto=showAcc?`<details class="panel access-help"${UI.accHelp?" open":""} id="acc-help"><summary><b>How app access works</b><span class="muted"> · Full = sees everything · Partial = no Overview, Events or Forecast</span></summary>
-    <ol><li>Add the person on this tab with the <b>Google email</b> they will sign in with.</li>
-    <li>Set <b>Access</b> to <b>Full</b> or <b>Partial</b>. They can sign in right away at this same web address.</li>
-    <li>To remove someone, set Access to <b>Not set</b> or delete them. They lose access immediately.</li></ol>
+    <ol><li>Add the person on this tab with their <b>email</b>, then create their login in Firebase (Authentication → Users → Add user) with the same email and a starting password.</li>
+    <li>Set <b>Access</b> to <b>Full</b> or <b>Partial</b>. Send them the web address and password; they can change it with "Forgot password?".</li>
+    <li>To remove someone, set Access to <b>Not set</b> or delete them here. They lose access to the data immediately. Also delete their login in Firebase.</li></ol>
     <p class="muted" style="margin:6px 0 0;font-size:.82rem">Only emails on this tab can sign in. The database enforces Full and Partial access, not just the screen.</p></details>`:"";
   return howto+`<div class="head"><div><h2>Staff</h2><p>Click a person to edit their details or assigned events. Events drop off this list once their date has passed. You can also assign staff from any event on the Events tab.</p></div><div class="toolbar">${addBtn("staff","Add staff")}</div></div>
    <div class="tbl"><table><thead><tr><th>Name</th><th>Role</th><th>Region</th><th>Upcoming events</th><th class="num">Open tasks</th>${showAcc?"<th>Access</th>":""}</tr></thead>
@@ -1211,7 +1215,6 @@ function saveFc(patch){
 /* ---------- boot ---------- */
 UI.tab=VIEWS[location.hash.slice(1)]?location.hash.slice(1):(VIEWS[UI.tab]?UI.tab:"overview");
 render();
-const GSVG='<svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.7 13.3l7.9 6.1C12.5 13.6 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 7l7.4 5.7c4.3-4 6.9-9.9 6.9-17.2z"/><path fill="#FBBC05" d="M10.6 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C1 16.6 0 20.2 0 24s1 7.4 2.7 10.7l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.8 2.3-8.5 2.3-6.2 0-11.5-4.1-13.4-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z"/></svg>';
 function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.innerHTML=`<div class="gate">${html}</div>`}
 (async()=>{
   const sync=document.getElementById("sync");
@@ -1220,18 +1223,29 @@ function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.
   firebase.initializeApp(C.firebase);
   const auth=firebase.auth(), fs=firebase.firestore();
   let started=false;
-  const signInBtn=()=>`<button class="gbtn" id="g-signin" type="button">${GSVG}Sign in with Google</button>`;
-  const bindSignIn=()=>{const b=document.getElementById("g-signin");if(b)b.onclick=()=>{const p=new firebase.auth.GoogleAuthProvider();p.setCustomParameters({prompt:"select_account"});auth.signInWithPopup(p).catch(e=>{if(e&&e.code==="auth/popup-blocked")auth.signInWithRedirect(p);else gate(`<h2>The Dugout</h2><p>Sign-in didn't finish: ${esc(e&&e.message||"unknown error")}</p>${signInBtn()}`),bindSignIn()})}};
+  const loginForm=(msg,err)=>`<h2>The Dugout</h2><p>Prep Baseball Pennsylvania staff only.</p>
+    <form class="login" id="login" autocomplete="on"><label>Email<input type="email" id="lg-email" autocomplete="username" required></label>
+    <label>Password<input type="password" id="lg-pass" autocomplete="current-password" required></label>
+    <button class="primary" type="submit" id="lg-go">Sign in</button><button class="linkish" type="button" id="lg-reset">Forgot password?</button>
+    <p class="msg${err?" err":""}" id="lg-msg" role="status">${esc(msg||"")}</p></form>`;
+  const showLogin=(msg,err)=>{gate(loginForm(msg,err));const f=document.getElementById("login"),m=document.getElementById("lg-msg"),em=document.getElementById("lg-email");
+    const say=(t,e)=>{m.textContent=t;m.className="msg"+(e?" err":"")};
+    f.onsubmit=ev=>{ev.preventDefault();const go=document.getElementById("lg-go");go.disabled=true;say("Signing in…");
+      auth.signInWithEmailAndPassword(em.value.trim(),document.getElementById("lg-pass").value).catch(e=>{go.disabled=false;
+        const c=e&&e.code||"";say(/wrong-password|invalid-credential|user-not-found|invalid-login/.test(c)?"That email and password don't match. Try again or reset your password.":c==="auth/too-many-requests"?"Too many tries. Wait a few minutes or reset your password.":"Couldn't sign in: "+(e&&e.message||"unknown error"),true)})};
+    document.getElementById("lg-reset").onclick=()=>{const e=em.value.trim();if(!e){say("Enter your email above, then click Forgot password.",true);em.focus();return}
+      auth.sendPasswordResetEmail(e).then(()=>say("If that email has an account, a reset link is on its way. Check spam too.")).catch(()=>say("If that email has an account, a reset link is on its way. Check spam too."))};
+    em.focus()};
   const addSignOut=email=>{const meta=document.querySelector(".brand-right");if(!meta||document.getElementById("signout"))return;const b=document.createElement("button");b.id="signout";b.type="button";b.className="signout";b.title=email;b.textContent="Sign out";b.onclick=()=>auth.signOut().then(()=>location.reload());meta.appendChild(b)};
   auth.onAuthStateChanged(async user=>{
-    if(!user){dbState="off";sync.textContent="Signed out";gate(`<h2>The Dugout</h2><p>Prep Baseball Pennsylvania staff only. Sign in with the Google account on your staff profile.</p>${signInBtn()}`);bindSignIn();return}
+    if(!user){dbState="off";sync.textContent="Signed out";showLogin();return}
     if(started)return;
     const email=String(user.email||"").toLowerCase();
     addSignOut(email);
     const owners=(C.owners||[]).map(x=>String(x).toLowerCase());
     let level=owners.includes(email)?"Full":null;
     if(!level){try{const a=await fs.collection("access").doc(email).get();if(a.exists)level=a.data().level==="Full"?"Full":"Partial"}catch(e){}}
-    if(!level){dbState="off";sync.textContent="No access";gate(`<h2>Not on the staff list</h2><p>${esc(email)} doesn't have access to The Dugout yet. Ask Nathan to add this email on the Staff tab.</p><button type="button" id="g-out">Use a different account</button>`);document.getElementById("g-out").onclick=()=>auth.signOut();return}
+    if(!level){dbState="off";sync.textContent="No access";gate(`<h2>Not on the staff list</h2><p>${esc(email)} doesn't have access to The Dugout yet. Ask Nathan to add this email on the Staff tab.</p><button type="button" id="g-out">Sign out</button>`);document.getElementById("g-out").onclick=()=>auth.signOut();return}
     started=true;gated=false;
     document.getElementById("tabs").hidden=false;
     db=fs;dbState="on";canWrite=true;isFull=level==="Full";
