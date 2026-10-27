@@ -569,6 +569,7 @@ document.getElementById("dlg-form").addEventListener("submit",async ev=>{
   try{
     let docId=rec&&rec.id;
     if(rec&&col==="players"){pdSet(rec.id,out);closeForm();refreshPD();return}
+    const prevAssignee=col==="tasks"&&rec?(byId("tasks",rec.id)||rec).assigneeId:null;
     if(rec){const base=Object.assign({},byId(col,rec.id)||rec);delete base.id;await db.collection(F.col||col).doc(rec.id).set(Object.assign(base,out,{updatedAt:new Date().toISOString()}));}
     else if(col==="fc27"){docId="fc27-"+Date.now().toString(36);await db.collection("settings").doc(docId).set(Object.assign(out,{createdAt:new Date().toISOString()}));}
     else{const ref=await db.collection(col).add(Object.assign(out,{createdAt:new Date().toISOString()}));docId=ref&&ref.id;
@@ -580,7 +581,8 @@ document.getElementById("dlg-form").addEventListener("submit",async ev=>{
       for(const st of S.staff){const cur=Array.isArray(st.eventIds)?st.eventIds:[];const had=cur.includes(docId),on=want.has(st.id);
         if(had!==on){await db.collection("staff").doc(st.id).update({eventIds:on?cur.concat(docId):cur.filter(x=>x!==docId)})}}
     }
-    closeForm();
+    if(col==="tasks"&&docId&&out.assigneeId&&out.assigneeId!==prevAssignee&&out.status!=="Done"){UI.taskMail=docId}
+    closeForm();if(col==="tasks"&&UI.taskMail===docId)render();
   }catch(e){showErr(e)}finally{btn.disabled=false}
 });
 
@@ -767,6 +769,15 @@ function vStaff(){
    <tbody>${rows||emptyRow(6,waiting("staff")?"Loading staff…":"No staff yet.","staff","Add staff")}</tbody></table></div>`;
 }
 
+/* One-click email to a task's assignee (opens the sender's own mail app). */
+function taskMailHref(t){const st=byId("staff",t.assigneeId);if(!st||!st.email)return"";const ev=byId("events",t.eventId)||byId("schedule",t.eventId);
+  const first=String(st.name||"").split(" ")[0]||"there",me=(typeof meName==="function"?meName():"");
+  const link=location.origin+location.pathname+"#tasks";
+  const lines=[`Hi ${first},`,"","You've been assigned a task in The Dugout:","",`Task: ${t.title||""}`];
+  if(ev)lines.push(`Event: ${ev.name}`);if(t.due)lines.push(`Due: ${fmtDate(t.due)}`);if(t.priority)lines.push(`Priority: ${t.priority}`);if(t.notes)lines.push("",`Notes: ${t.notes}`);
+  lines.push("",`Open The Dugout: ${link}`);if(me&&me!=="Staff")lines.push("",`- ${me}`);
+  return "mailto:"+encodeURIComponent(st.email)+"?subject="+encodeURIComponent("New task: "+(t.title||""))+"&body="+encodeURIComponent(lines.join("\n"));
+}
 function vTasks(){
   const td=todayISO(), pr={High:0,Medium:1,Low:2};
   let list=S.tasks.filter(t=>UI.taskStatus==="All"||(UI.taskStatus==="Open"?t.status!=="Done":t.status===UI.taskStatus));
@@ -776,10 +787,13 @@ function vTasks(){
   const overdue=S.tasks.filter(t=>t.status!=="Done"&&t.due&&t.due<td).length;
   const rows=list.map(t=>{const late=t.status!=="Done"&&t.due&&t.due<td;const who=byId("staff",t.assigneeId),ev=byId("events",t.eventId);
     const pc={High:"bad",Medium:"warn",Low:""}[t.priority]||"";
-    return `<tr class="click" data-edit="tasks" data-id="${esc(t.id)}"><td class="name">${esc(t.title)}${sampleChip(t)}<span class="sub">${ev?esc(ev.name):"General"}</span></td><td>${who?esc(who.name):'<span class="muted">Unassigned</span>'}</td>
+    return `<tr class="click" data-edit="tasks" data-id="${esc(t.id)}"><td class="name">${esc(t.title)}${sampleChip(t)}<span class="sub">${ev?esc(ev.name):"General"}</span></td><td>${who?esc(who.name)+(who.email&&t.status!=="Done"?` <a href="${esc(taskMailHref(t))}" title="Email ${esc(who.name)} about this task" aria-label="Email ${esc(who.name)} about this task" style="text-decoration:none">✉</a>`:""):'<span class="muted">Unassigned</span>'}</td>
      <td class="num">${late?'<span class="chip bad">Overdue</span> ':""}${fmtDate(t.due)}</td><td><span class="chip ${pc}">${esc(t.priority||"Medium")}</span></td>
      <td><select class="cell" data-status="${esc(t.id)}" id="ts_${esc(t.id)}" aria-label="Status"${canWrite?"":" disabled"}>${["To do","In progress","Done"].map(s=>`<option${(t.status||"To do")===s?" selected":""}>${s}</option>`).join("")}</select></td></tr>`}).join("");
-  return `<div class="head"><div><h2>Tasks</h2><p>${S.tasks.filter(t=>t.status!=="Done").length} open${overdue?` · <span class="var-neg">${overdue} overdue</span>`:""}. Change status right in the table.</p></div>
+  const tm=UI.taskMail&&byId("tasks",UI.taskMail),tmSt=tm&&byId("staff",tm.assigneeId);
+  const mailBar=tm&&tmSt&&tmSt.email?`<div class="filt-on" role="status" style="background:var(--good-soft)"><span><b>Task saved and assigned to ${esc(tmSt.name)}.</b> Let them know by email:</span><span style="display:flex;gap:6px"><a class="small primary" style="padding:4px 10px;border-radius:var(--r);background:var(--accent);color:var(--accent-ink);text-decoration:none;font-weight:600;font-size:.8rem" href="${esc(taskMailHref(tm))}" data-tmail="1">✉ Email ${esc(String(tmSt.name).split(" ")[0])}</a><button class="small" type="button" data-tmdismiss="1">Dismiss</button></span></div>`
+    :tm&&tmSt?`<div class="filt-on" role="status"><span><b>Task assigned to ${esc(tmSt.name)}</b>, but there's no email on their Staff profile, so no email can be sent.</span><button class="small" type="button" data-tmdismiss="1">Dismiss</button></div>`:"";
+  return mailBar+`<div class="head"><div><h2>Tasks</h2><p>${S.tasks.filter(t=>t.status!=="Done").length} open${overdue?` · <span class="var-neg">${overdue} overdue</span>`:""}. Change status right in the table.</p></div>
    <div class="toolbar">${selHTML("tk-status",UI.taskStatus,["Open","To do","In progress","Done","All"],"Status")}${selHTML("tk-who",UI.taskWho,[["","Everyone"],["none","Unassigned"]].concat(S.staff.map(s=>[s.id,s.name])),"Assigned to")}${selHTML("tk-event",UI.taskEvent,[["","All events"]].concat(S.events.map(e=>[e.id,e.name+" ("+(e.season||"")+")"])),"Event")}${addBtn("tasks","Add task")}</div></div>
    <div class="tbl"><table><thead><tr><th>Task</th><th>Assigned to</th><th class="num">Due</th><th>Priority</th><th>Status</th></tr></thead>
    <tbody>${rows||emptyRow(5,waiting("tasks")?"Loading tasks…":"No tasks match these filters.","tasks","Add task")}</tbody></table></div>`;
@@ -1224,6 +1238,8 @@ document.addEventListener("click",async e=>{
     if(col==="prospect"){openForm("players",null,{gradYear:UI.prClass||"2027",state:(UI.prState&&UI.prState!=="home")?UI.prState:"PA"});return}
     if(col==="tasks"&&UI.taskEvent)preset.eventId=UI.taskEvent;
     openForm(col,null,preset);return}
+  if(t.closest("[data-tmdismiss]")){UI.taskMail=null;render();return}
+  if(t.closest('a[href^="mailto:"]')){e.stopPropagation();if(t.closest("[data-tmail]"))setTimeout(()=>{UI.taskMail=null;render()},400);return}
   const mv=t.closest("[data-mv]");if(mv){e.stopPropagation();if(mv.disabled)return;const d=rkActive();if(!d||!db)return;
     const ord=rkOrder(d).filter(x=>!UI.rkState||x.p.state===UI.rkState);
     const i=ord.findIndex(x=>x.p.id===mv.dataset.id),j=mv.dataset.mv==="up"?i-1:i+1;if(i<0||j<0||j>=ord.length)return;
