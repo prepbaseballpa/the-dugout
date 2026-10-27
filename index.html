@@ -462,23 +462,23 @@ function staffPicker(rec){
    <div class="sp-list">${list.length?list.map(st=>`<label class="sp-row" for="sp_${esc(st.id)}"><input type="checkbox" id="sp_${esc(st.id)}" name="__staff" value="${esc(st.id)}"${on.includes(st.id)?" checked":""}><span style="min-width:0"><b>${esc(st.name)}</b> ${evId?availChip(evId,st.id):""}<span class="muted" style="display:block;font-size:.78rem">${esc([st.role,st.region].filter(Boolean).join(" · "))}</span></span></label>`).join(""):'<span class="muted">Add people on the Staff tab first.</span>'}</div></details>`;
 }
 const noteUp={busy:false,msg:"",err:false};
-const VID_OK=["video/mp4","video/webm","image/png","image/jpeg","image/webp","image/gif"];
+const VID_OK=["video/mp4","video/webm","video/quicktime","image/png","image/jpeg","image/webp","image/gif"];
 function noteVidHTML(){
   const v=(editing&&editing.vids)||[];
   const list=v.length?`<ul class="dvlist nv">${v.map((x,i)=>`<li><span>${x.link?`<a href="${esc(x.link)}" target="_blank" rel="noopener">▶ ${esc(x.name||"Video link")}</a>`:`▶ ${esc(x.name||"Video")}`}</span><button type="button" class="small" data-nvdel="${i}">Remove</button></li>`).join("")}</ul>`:`<p class="muted" style="margin:0 0 6px;font-size:.85rem">No video attached to this note.</p>`;
-  const up=assetsNS&&canWrite?`<label class="upbtn${noteUp.busy?" busy":""}" for="note-vid-file">${noteUp.busy?"Uploading…":"⬆ Upload video or photo"}<input type="file" id="note-vid-file" accept="video/mp4,video/webm,image/png,image/jpeg,image/webp,image/gif" multiple hidden${noteUp.busy?" disabled":""}></label>`:"";
-  return `<div class="subhead" style="margin-bottom:8px">Video</div>${list}<div class="uploader" style="border:0;margin:0;padding:0">${up}<span class="muted" style="font-size:.78rem">MP4 or WebM up to 20 MB. iPhone .mov files need converting to MP4, or paste a link. Video saves with the note when you click Save.</span>
+  const up=assetsNS&&canWrite?`<label class="upbtn${noteUp.busy?" busy":""}" for="note-vid-file">${noteUp.busy?"Uploading…":"⬆ Upload video or photo"}<input type="file" id="note-vid-file" accept="video/*,image/*" multiple hidden${noteUp.busy?" disabled":""}></label>`:"";
+  return `<div class="subhead" style="margin-bottom:8px">Video</div>${list}<div class="uploader" style="border:0;margin:0;padding:0">${up}<span class="muted" style="font-size:.78rem">Videos (including iPhone) and photos up to 500 MB, from your camera roll or computer. Video saves with the note when you click Save.</span>
    ${noteUp.msg?`<div class="${noteUp.err?"var-neg":"var-pos"}" style="font-size:.85rem">${esc(noteUp.msg)}</div>`:""}
    ${canWrite?`<div class="linkrow"><input id="note-vid-url" type="url" placeholder="Paste a video link (YouTube, Hudl, X…)"><input id="note-vid-name" type="text" placeholder="Label (optional)"><button type="button" data-nvlink="1">Add link</button></div>`:""}</div>`;
 }
 function noteVidRefresh(){const el=document.getElementById("note-vid");if(el&&editing&&editing.col==="notes")el.innerHTML=noteVidHTML()}
 async function noteUpload(files){
   if(!assetsNS||noteUp.busy||!editing)return;noteUp.busy=true;noteUp.msg="";noteVidRefresh();let added=0;const errs=[];
-  for(const f of files){let type=f.type;if(!type&&/\.mp4$/i.test(f.name))type="video/mp4";if(!type&&/\.webm$/i.test(f.name))type="video/webm";
-    if(!VID_OK.includes(type)){errs.push(`${f.name}: ${/\.mov$/i.test(f.name)||type==="video/quicktime"?".mov isn't supported. Convert it to MP4 or add a link.":"file type isn't supported."}`);continue}
-    if(f.size>20*1048576){errs.push(`${f.name}: over the 20 MB limit. Trim it or add a link.`);continue}
+  for(const f of files){let type=f.type;if(!type&&/\.mp4$/i.test(f.name))type="video/mp4";if(!type&&/\.webm$/i.test(f.name))type="video/webm";if(!type&&/\.mov$/i.test(f.name))type="video/quicktime";
+    if(!VID_OK.includes(type)){errs.push(`${f.name}: ${/\.mov$/i.test(f.name)||type==="video/quicktime"?"file type isn't supported.":"file type isn't supported."}`);continue}
+    if(f.size>500*1048576){errs.push(`${f.name}: over the 500 MB limit. Trim it or add a link.`);continue}
     try{const r=await assetsNS.upload(f,{type});if(editing&&editing.vids){editing.vids.push({id:r.id,url:r.url,name:f.name,type:r.contentType,sizeBytes:r.sizeBytes,addedAt:new Date().toISOString()});added++}}
-    catch(e){const c=e&&e.code;errs.push(`${f.name}: `+(c==="too_large"?"over the 20 MB limit.":c==="unsupported_type"?"file type isn't supported.":c==="quota_or_state"?"storage is full.":"upload failed. Try again."))}}
+    catch(e){const c=e&&e.code;errs.push(`${f.name}: `+(c==="too_large"?"over the 500 MB limit.":c==="unsupported_type"?"file type isn't supported.":c==="quota_or_state"?"storage is full.":"upload failed. Try again."))}}
   noteUp.busy=false;noteUp.err=errs.length>0;noteUp.msg=(added?`${added} file${added>1?"s":""} attached. Click Save to keep ${added>1?"them":"it"}. `:"")+errs.join(" ");noteVidRefresh();
 }
 function noteVidsView(x){const v=Array.isArray(x.videos)?x.videos:[];if(!v.length)return"";
@@ -488,8 +488,8 @@ function dlgVideoHTML(rec){
   if(!rec)return head+`<p class="muted" style="margin:0;font-size:.85rem">Save the player first. His profile opens next so you can upload video.</p>`;
   const p=byId("players",rec.id)||rec, vids=Array.isArray(p.videos)?p.videos:[];
   const list=vids.length?`<ul class="dvlist">${vids.map(v=>`<li>${v.link?`<a href="${esc(v.link)}" target="_blank" rel="noopener">▶ ${esc(v.name||"Video link")}</a>`:`▶ ${esc(v.name||"Video")}`}</li>`).join("")}</ul>`:`<p class="muted" style="margin:0 0 6px;font-size:.85rem">No video yet.</p>`;
-  const up=assetsNS&&canWrite?`<label class="upbtn${upState.busy?" busy":""}" for="dlg-vid-file">${upState.busy?"Uploading…":"⬆ Upload video or photo"}<input type="file" id="dlg-vid-file" data-pid="${esc(p.id)}" accept="video/mp4,video/webm,image/png,image/jpeg,image/webp,image/gif" multiple hidden></label>`:"";
-  return head+list+`<div class="uploader" style="border:0;margin:0;padding:0">${up}<span class="muted" style="font-size:.78rem">MP4 or WebM up to 20 MB. iPhone .mov files need converting to MP4, or paste a link.</span>
+  const up=assetsNS&&canWrite?`<label class="upbtn${upState.busy?" busy":""}" for="dlg-vid-file">${upState.busy?"Uploading…":"⬆ Upload video or photo"}<input type="file" id="dlg-vid-file" data-pid="${esc(p.id)}" accept="video/*,image/*" multiple hidden></label>`:"";
+  return head+list+`<div class="uploader" style="border:0;margin:0;padding:0">${up}<span class="muted" style="font-size:.78rem">Videos (including iPhone) and photos up to 500 MB, from your camera roll or computer.</span>
    ${upState.msg?`<div class="${upState.err?"var-neg":"var-pos"}" style="font-size:.85rem">${esc(upState.msg)}</div>`:""}
    ${canWrite?`<div class="linkrow"><input id="dlg-vid-url" type="url" placeholder="Paste a video link (YouTube, Hudl, X…)"><input id="dlg-vid-name" type="text" placeholder="Label (optional)"><button type="button" data-dlglink="${esc(p.id)}">Add link</button></div>`:""}</div>`;
 }
@@ -1035,8 +1035,8 @@ function vProfile(p){
      <div class="panel"><div class="head" style="margin-bottom:8px"><h3 style="margin:0">Video &amp; photos</h3><span class="muted" style="font-size:.8rem">${vids.length} saved</span></div>
       ${vids.length?`<div class="vids">${vids.map(vidCard).join("")}</div>`:`<div class="empty" style="padding:16px">No video yet.</div>`}
       <div class="uploader">
-       ${canUp?`<label class="upbtn${upState.busy?" busy":""}" for="vid-file">${upState.busy?"Uploading…":"⬆ Upload video or photo"}<input type="file" id="vid-file" accept="video/mp4,video/webm,image/png,image/jpeg,image/webp,image/gif" multiple hidden${upState.busy?" disabled":""}></label>
-       <span class="muted" style="font-size:.78rem">MP4 or WebM up to 20 MB each. iPhone .mov files need converting to MP4, or add a link instead.</span>`:`<span class="muted" style="font-size:.82rem">${canWrite?"Uploads aren't available in this view. You can still add video links.":"You have view-only access."}</span>`}
+       ${canUp?`<label class="upbtn${upState.busy?" busy":""}" for="vid-file">${upState.busy?"Uploading…":"⬆ Upload video or photo"}<input type="file" id="vid-file" accept="video/*,image/*" multiple hidden${upState.busy?" disabled":""}></label>
+       <span class="muted" style="font-size:.78rem">Videos (including iPhone) and photos up to 500 MB each, from your camera roll or computer.</span>`:`<span class="muted" style="font-size:.82rem">${canWrite?"Uploads aren't available in this view. You can still add video links.":"You have view-only access."}</span>`}
        ${upState.msg?`<div class="${upState.err?"var-neg":"var-pos"}" style="font-size:.85rem">${esc(upState.msg)}</div>`:""}
        ${canWrite?`<form id="vid-link-form" class="linkrow"><input id="vid-link-url" type="url" placeholder="Paste a video link (YouTube, Hudl, X…)" required><input id="vid-link-name" type="text" placeholder="Label (optional)"><button type="submit">Add link</button></form>`:""}
       </div></div>
@@ -1050,16 +1050,16 @@ function vProfile(p){
 async function saveVideos(p,vids){await db.collection("players").doc(p.id).update({videos:vids})}
 async function handleUpload(files,pid){
   const p=byId("players",pid||UI.profile);if(!p||!assetsNS||upState.busy)return;
-  const ok=["video/mp4","video/webm","image/png","image/jpeg","image/webp","image/gif"];
+  const ok=VID_OK;
   upState.busy=true;upState.msg="";upState.err=false;render();
   let added=0;const errs=[];
   for(const f of files){
-    let type=f.type; if(!type&&/\.mp4$/i.test(f.name))type="video/mp4"; if(!type&&/\.webm$/i.test(f.name))type="video/webm";
-    if(!ok.includes(type)){errs.push(`${f.name}: ${/\.mov$/i.test(f.name)||type==="video/quicktime"?".mov isn't supported. Convert it to MP4 or add a link.":"file type isn't supported. Use MP4, WebM or an image."}`);continue}
-    if(f.size>20*1048576){errs.push(`${f.name}: ${(f.size/1048576).toFixed(0)} MB is over the 20 MB limit. Trim it or add a link.`);continue}
+    let type=f.type; if(!type&&/\.mp4$/i.test(f.name))type="video/mp4"; if(!type&&/\.webm$/i.test(f.name))type="video/webm";if(!type&&/\.mov$/i.test(f.name))type="video/quicktime";
+    if(!ok.includes(type)){errs.push(`${f.name}: ${/\.mov$/i.test(f.name)||type==="video/quicktime"?"file type isn't supported.":"file type isn't supported. Use a video or photo file."}`);continue}
+    if(f.size>500*1048576){errs.push(`${f.name}: ${(f.size/1048576).toFixed(0)} MB is over the 500 MB limit. Trim it or add a link.`);continue}
     try{const r=await assetsNS.upload(f,{type});const cur=byId("players",p.id);const vids=(Array.isArray(cur.videos)?cur.videos:[]).concat({id:r.id,url:r.url,name:f.name,type:r.contentType,sizeBytes:r.sizeBytes,addedAt:new Date().toISOString()});
       await saveVideos(cur,vids);(cur.videos=vids);added++}
-    catch(e){const c=e&&e.code;errs.push(`${f.name}: `+(c==="too_large"?"over the 20 MB limit.":c==="unsupported_type"?"file type isn't supported.":c==="quota_or_state"?"storage is full.":c==="rate_limited"?"too many uploads at once. Wait a moment and try again.":"upload failed. Try again."))}
+    catch(e){const c=e&&e.code;errs.push(`${f.name}: `+(c==="too_large"?"over the 500 MB limit.":c==="unsupported_type"?"file type isn't supported.":c==="quota_or_state"?"storage is full.":c==="rate_limited"?"too many uploads at once. Wait a moment and try again.":"upload failed. Try again."))}
   }
   upState.busy=false;upState.err=errs.length>0;upState.msg=(added?`${added} file${added>1?"s":""} saved. `:"")+errs.join(" ");render();dlgVideoRefresh();
 }
