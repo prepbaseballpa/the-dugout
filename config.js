@@ -1,17 +1,16 @@
 /* The Dugout — site settings. Nothing here is secret: Firebase web config only identifies the project.
-   Access is enforced by the Firestore and Storage security rules. */
+   Access is enforced by the Firestore security rules. */
 window.DUGOUT_CONFIG = {
-  // Paste the firebaseConfig block from Firebase console → Project settings → Your apps → Web app
   firebase: {
-    apiKey: "",
-    authDomain: "",
-    projectId: "",
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: ""
+    apiKey: "AIzaSyBKh-5AdJ1stG-axQU07x3JPApEHpxjYuo",
+    authDomain: "the-dugout-pa.firebaseapp.com",
+    projectId: "the-dugout-pa",
+    storageBucket: "the-dugout-pa.firebasestorage.app",
+    messagingSenderId: "953722614251",
+    appId: "1:953722614251:web:da533bcf7b26351fb0e9ae"
   },
-  // Always have Full access, even before the Staff tab is set up. Must match firestore.rules.
+  // Always have Full access. Must match the owner list in firestore.rules.
   owners: ["ocker@prepbaseball.com"],
-  // Set to false if Firebase Storage isn't enabled (hides video/photo uploads; links still work).
-  storage: true
+  // Video/photo uploads stay off until Firebase Storage is set up (links still work).
+  storage: false
 };
