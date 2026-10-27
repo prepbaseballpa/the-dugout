@@ -33,6 +33,6 @@ Never commit data exports to this repo.
 1. Firebase project with **Email/Password** sign-in, public sign-up turned **off** (Authentication → Settings → User actions), Firestore (production mode) and optionally Storage.
 2. Paste the web app's `firebaseConfig` into `config.js`.
 3. Publish `firestore.rules` (and `storage.rules` if Storage is on) in the Firebase console.
-4. Firebase console → Authentication → Settings → **Authorized domains** → add `www.northeastdugoutpa.com` and `northeastdugoutpa.com`. Create your own login under Authentication → Users → Add user.
+4. Firebase console → Authentication → Settings → **Authorized domains** → add `prepbaseballpa.github.io`. Create your own login under Authentication → Users → Add user.
 5. GitHub repo → Settings → Pages → Deploy from branch → `main` / root.
-6. Open `https://www.northeastdugoutpa.com/import.html`, sign in as an owner, and import `dugout-export.json`.
+6. Open `https://prepbaseballpa.github.io/the-dugout/import.html`, sign in as an owner, and import `dugout-export.json`.
