@@ -1,0 +1,3 @@
+# Never commit data exports
+*export*.json
+*.csv

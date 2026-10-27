@@ -1,0 +1,31 @@
+rules_version = '2';
+// The Dugout — Firestore security rules.
+// Paste into Firebase console → Firestore Database → Rules, then Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function email() { return request.auth.token.email.lower(); }
+    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    // Owners always have Full access. Keep in sync with owners in config.js.
+    function isOwner() { return signedIn() && email() in ['ocker@prepbaseball.com']; }
+    function accessDoc() { return /databases/$(database)/documents/access/$(email()); }
+    function isStaff() { return isOwner() || (signedIn() && exists(accessDoc())); }
+    function isFull() { return isOwner() || (signedIn() && exists(accessDoc()) && get(accessDoc()).data.level == 'Full'); }
+
+    // Who can sign in. Written automatically from the Staff tab by Full users.
+    match /access/{e} {
+      allow read: if isFull() || (signedIn() && e == email());
+      allow write: if isFull();
+    }
+    // Full-time only: finances and forecast
+    match /events/{id}   { allow read, write: if isFull(); }
+    match /settings/{id} { allow read, write: if isFull(); }
+    // Everyone on staff can read; only Full can change the published schedule
+    match /schedule/{id} { allow read: if isStaff(); allow write: if isFull(); }
+    // Shared working data
+    match /players/{id}      { allow read, write: if isStaff(); }
+    match /staff/{id}        { allow read: if isStaff(); allow write: if isFull() || (isStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['eventIds','updatedAt'])); }
+    match /tasks/{id}        { allow read, write: if isStaff(); }
+    match /notes/{id}        { allow read, write: if isStaff(); }
+    match /availability/{id} { allow read, write: if isStaff(); }
+  }
+}
