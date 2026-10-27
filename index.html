@@ -785,22 +785,71 @@ function vTasks(){
    <tbody>${rows||emptyRow(5,waiting("tasks")?"Loading tasks…":"No tasks match these filters.","tasks","Add task")}</tbody></table></div>`;
 }
 
+/* ---------- ranking versions: shared rough drafts per class (settings/rkdraft-*) ---------- */
+let ME_EMAIL="";
+const meName=()=>{const st=S.staff.find(x=>ME_EMAIL&&String(x.email||"").toLowerCase()===ME_EMAIL);return st?st.name:(ME_EMAIL||"Staff")};
+const rkHome=p=>isHome(p)&&String(p.gradYear)===UI.rkClass;
+const rkDraftsFor=c=>(S.rkDrafts||[]).filter(d=>d.cls===c&&!d.deleted).sort((a,b)=>String(a.createdAt||"").localeCompare(String(b.createdAt||"")));
+const rkActive=()=>{const d=(S.rkDrafts||[]).find(x=>x.id===UI.rkVer&&x.cls===UI.rkClass&&!x.deleted);return d||null};
+function rkOrder(d){ /* players in this class ordered by the draft (or published) ranks */
+  const r=p=>d?(Object.prototype.hasOwnProperty.call(d.ranks||{},p.id)?d.ranks[p.id]:p.rank):p.rank;
+  return S.players.filter(p=>rkHome(p)&&has(r(p))).map(p=>({p,r:n(r(p))})).sort((a,b)=>a.r-b.r||String(a.p.name).localeCompare(String(b.p.name)));
+}
+async function rkSaveDraft(d,ranks){await db.collection("settings").doc(d.id).set(Object.assign({},stripId(d),{ranks,updatedAt:new Date().toISOString(),updatedBy:meName()}))}
+const stripId=o=>{const x=Object.assign({},o);delete x.id;return x};
+async function rkNewDraft(){
+  const c=UI.rkClass,k=rkDraftsFor(c).length+1;
+  const name=(prompt(`Name this Class of ${c} draft:`,`Draft ${k}`)||"").trim();if(!name)return;
+  const ranks={};rkOrder(null).forEach(x=>ranks[x.p.id]=x.r);
+  const id="rkdraft-"+c+"-"+Date.now().toString(36);
+  await db.collection("settings").doc(id).set({cls:c,name,ranks,createdAt:new Date().toISOString(),createdBy:meName(),updatedAt:new Date().toISOString(),updatedBy:meName()});
+  UI.rkVer=id;saveUI();render();
+}
+async function rkPublish(d){
+  const ord=rkOrder(d);
+  if(!confirm(`Publish "${d.name}" as the official Class of ${d.cls} rankings?\n\nEveryone will see this order, and the arrows will show movement from the current published list.`))return;
+  const today=new Date(),stamp=(today.getMonth()+1)+"/"+today.getDate()+"/"+today.getFullYear(),now=today.toISOString();
+  const inDraft=new Set(ord.map(x=>x.p.id));
+  const ups=[];
+  ord.forEach(({p,r})=>{const old=rawPlayer(p.id)?rawPlayer(p.id).rank:p.rank;
+    const u={rank:r,prevRank:has(old)?n(old):null,rankUpdatedAt:now};if(has(old))u.rankHistory=(p.rankHistory?p.rankHistory+" · ":"")+stamp+": "+old;ups.push([p.id,u])});
+  S.players.filter(p=>rkHome(p)&&isRanked(p)&&!inDraft.has(p.id)).forEach(p=>ups.push([p.id,{rank:null,prevRank:n(p.rank),rankUpdatedAt:now,rankHistory:(p.rankHistory?p.rankHistory+" · ":"")+stamp+": "+p.rank}]));
+  try{
+    if(db.batch){for(let i=0;i<ups.length;i+=400){const b=db.batch();ups.slice(i,i+400).forEach(([id,u])=>b.update(db.collection("players").doc(id),u));await b.commit()}}
+    else{for(const [id,u] of ups)await db.collection("players").doc(id).update(u)}
+    await db.collection("settings").doc(d.id).set(Object.assign(stripId(d),{publishedAt:now,publishedBy:meName()}));
+    ups.forEach(([id])=>{if(PD[id]){delete PD[id].rank;if(!Object.keys(PD[id]).length)delete PD[id]}});savePD();
+    UI.rkVer="";saveUI();render();alert(`Published. Class of ${d.cls} rankings now match "${d.name}".`);
+  }catch(e){alert("Publishing didn't finish: "+((e&&e.message)||e)+". Nothing in the draft was lost; try again.")}
+}
 function vRankings(){
-  let list=S.players.filter(p=>isRanked(p)&&isHome(p)&&String(p.gradYear)===UI.rkClass&&(!UI.rkState||p.state===UI.rkState));
-  list.sort((a,b)=>(n(a.rank)||999)-(n(b.rank)||999)||String(a.name).localeCompare(String(b.name)));
+  const canDraft=!isPT()&&db;
+  if(UI.rkVer&&!rkActive())UI.rkVer="";
+  const d=canDraft?rkActive():null;
+  let ord=rkOrder(d);
+  const list=ord.map(x=>x.p).filter(p=>!UI.rkState||p.state===UI.rkState);
+  const rOf=p=>d?(Object.prototype.hasOwnProperty.call(d.ranks||{},p.id)?d.ranks[p.id]:p.rank):p.rank;
   const nc=id=>S.notes.filter(x=>x.playerId===id).length;
-  const mvmt=p=>{if(p.prevRank==null||p.prevRank===""){return p.source?'<span class="mvmt" style="color:var(--amber)">NEW</span>':""}const d=n(p.prevRank)-n(p.rank);return d>0?`<span class="mvmt var-pos">▲${d}</span>`:d<0?`<span class="mvmt var-neg">▼${-d}</span>`:'<span class="mvmt muted">–</span>'};
-  const rows=list.map((p,i)=>`<tr class="click" data-profile="${esc(p.id)}"><td class="rank" title="${esc(p.rankHistory||"")}">${esc(p.rank??"–")}${pdOn(p,"rank")?`<span class="mvmt" style="color:var(--amber)" title="Saved rank: ${esc((rawPlayer(p.id)||{}).rank??"none")}">DRAFT</span>`:mvmt(p)}</td>
+  const mvmt=p=>{const cur=rOf(p);if(d){const pub=p.rank;if(!has(pub))return'<span class="mvmt" style="color:var(--amber)">NEW</span>';const dd=n(pub)-n(cur);return dd>0?`<span class="mvmt var-pos" title="vs published #${esc(pub)}">▲${dd}</span>`:dd<0?`<span class="mvmt var-neg" title="vs published #${esc(pub)}">▼${-dd}</span>`:'<span class="mvmt muted">–</span>'}
+    if(p.prevRank==null||p.prevRank===""){return p.source?'<span class="mvmt" style="color:var(--amber)">NEW</span>':""}const dd=n(p.prevRank)-n(cur);return dd>0?`<span class="mvmt var-pos">▲${dd}</span>`:dd<0?`<span class="mvmt var-neg">▼${-dd}</span>`:'<span class="mvmt muted">–</span>'};
+  const editable=!!d&&canWrite;
+  const rows=list.map((p,i)=>`<tr class="click" data-profile="${esc(p.id)}"><td class="rank" title="${esc(p.rankHistory||"")}">${esc(rOf(p)??"–")}${!d&&pdOn(p,"rank")?`<span class="mvmt" style="color:var(--amber)" title="Saved rank: ${esc((rawPlayer(p.id)||{}).rank??"none")}">DRAFT</span>`:mvmt(p)}</td>${editable?`<td><div class="mv"><button class="small" data-mv="up" data-id="${esc(p.id)}" aria-label="Move up"${i===0?" disabled":""}>▲</button><button class="small" data-mv="down" data-id="${esc(p.id)}" aria-label="Move down"${i===list.length-1?" disabled":""}>▼</button><button class="small" data-rkjump="${esc(p.id)}" aria-label="Move to rank number" title="Move to rank #">#</button><button class="small" data-rkout="${esc(p.id)}" aria-label="Remove from this draft" title="Remove from this draft">✕</button></div></td>`:""}
     <td class="name" style="min-width:220px">${esc(p.name)}${aag(p)}${fg(p)}${sampleChip(p)}<span class="sub">${esc(p.school||"")}${p.state?", "+esc(p.state):""}</span>${p.notes?`<span class="blurb" title="${esc(p.notes)}">${esc(p.notes)}</span>`:""}</td><td>${esc(p.position||"")}<span class="sub">${esc(p.batsThrows||"")}${p.height?" · "+esc(p.height):""}${p.weight?" · "+esc(p.weight):""}</span></td>
     <td class="num">${p.fbVelo?esc(p.fbVelo):"—"}</td><td class="num">${p.exitVelo?esc(p.exitVelo):"—"}</td><td class="num">${p.sixty?Number(p.sixty).toFixed(2):"—"}</td><td class="num">${p.infVelo||p.ofVelo?esc(p.infVelo||p.ofVelo):"—"}</td>
     <td>${p.commitment?`<span class="chip good">${esc(p.commitment)}</span>`:'<span class="muted">Uncommitted</span>'}</td>
     <td class="num"><button class="small" data-profile="${esc(p.id)}">▶ Video &amp; notes${nc(p.id)||(p.videos||[]).length?` · ${nc(p.id)+(p.videos||[]).length}`:""}</button></td>
-    <td><div class="mv"><button class="small" data-mv="up" data-id="${esc(p.id)}" aria-label="Move up"${i===0||!canWrite?" disabled":""}>▲</button><button class="small" data-mv="down" data-id="${esc(p.id)}" aria-label="Move down"${i===list.length-1||!canWrite?" disabled":""}>▼</button></div></td></tr>`).join("");
-  return `<div class="head"><div><h2>Class of ${esc(UI.rkClass)} Rankings</h2><p>Arrows under each rank show movement since the previous list. Click any player to open his profile, where you can add scouting notes, metrics and video. Use ▲▼ to swap a player with the one above or below. Changes stay private to you until you click <b>Save for everyone</b>.</p></div>
-   <div class="toolbar">${selHTML("rk-class",UI.rkClass,["2027","2028","2029","2030"],"Class")}${selHTML("rk-state",UI.rkState,[["","PA + WV"],"PA","WV"],"State")}${addBtn("players","Add player")}</div></div>
-   ${draftBar()}
-   <div class="tbl"><table><thead><tr><th>Rk</th><th>Player</th><th>Pos</th><th class="num">FB</th><th class="num">EV</th><th class="num">60</th><th class="num">INF/OF</th><th>Commit</th><th class="num">Profile</th><th>Move</th></tr></thead>
-   <tbody>${rows||emptyRow(10,waiting("players")?"Loading players…":"No players ranked in this class yet.","players","Add player")}</tbody></table></div>`;
+</tr>`).join("");
+  const drafts=canDraft?rkDraftsFor(UI.rkClass):[];
+  const verSel=canDraft?selHTML("rk-ver",UI.rkVer||"",[["","Published (official)"]].concat(drafts.map(x=>[x.id,x.name+(x.publishedAt?" ✓":"")])).concat([["__new","+ New draft…"]]),"Version"):"";
+  const when=x=>x?new Date(x).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"";
+  const bar=d?`<div class="filt-on" role="status" style="background:var(--amber-soft)"><span><b>Draft: ${esc(d.name)}</b> · ${num(ord.length)} players · started by ${esc(d.createdBy||"")}${d.updatedAt?` · last edit ${esc(d.updatedBy||"")} ${esc(when(d.updatedAt))}`:""}${d.publishedAt?` · <b>published ${esc(when(d.publishedAt))}</b>`:""}. Full-time staff see and edit this draft together; the official rankings don't change until you publish.</span>
+     <span style="display:flex;gap:6px;flex-wrap:wrap"><button class="small" type="button" data-rkact="rename">Rename</button><button class="small" type="button" data-rkact="copy">Duplicate</button><button class="small danger" type="button" data-rkact="delete">Delete</button><button class="small primary" type="button" data-rkact="publish"${canWrite?"":" disabled"}>Publish as official</button></span>${(()=>{const inD=new Set(ord.map(x=>x.p.id));const pool=S.players.filter(p=>rkHome(p)&&!inD.has(p.id)).sort((a,b)=>String(a.name).localeCompare(String(b.name)));return pool.length?`<label class="inline" for="rk-addp" style="flex-basis:100%">Add a player to this draft (goes to the bottom)<select id="rk-addp"><option value="">Choose a ${esc(UI.rkClass)} player…</option>${pool.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}${p.school?" · "+esc(p.school):""}</option>`).join("")}</select></label>`:""})()}</div>`
+    :canDraft?`<p class="muted" style="margin:0 0 10px;font-size:.85rem">You're viewing the <b>published</b> rankings. To rework the order, pick or start a draft from <b>Version</b>${drafts.length?` (${drafts.length} draft${drafts.length>1?"s":""} for ${esc(UI.rkClass)})`:""}.</p>`:"";
+  return `<div class="head"><div><h2>Class of ${esc(UI.rkClass)} Rankings${d?' <span class="chip warn" style="font-size:.7rem;vertical-align:middle">Draft</span>':""}</h2><p>${d?"Arrows show movement versus the published rankings. Use ▲▼ to swap neighbors, # to jump a player to any rank, ✕ to drop him from this draft. Edits save to the draft right away.":"Arrows under each rank show movement since the previous published list. Click any player to open his profile, where you can add scouting notes, metrics and video."}</p></div>
+   <div class="toolbar">${selHTML("rk-class",UI.rkClass,["2027","2028","2029","2030"],"Class")}${verSel}${selHTML("rk-state",UI.rkState,[["","PA + WV"],"PA","WV"],"State")}${addBtn("players","Add player")}</div></div>
+   ${bar}${d?"":draftBar()}
+   <div class="tbl"><table><thead><tr><th>Rk</th>${editable?"<th>Move</th>":""}<th>Player</th><th>Pos</th><th class="num">FB</th><th class="num">EV</th><th class="num">60</th><th class="num">INF/OF</th><th>Commit</th><th class="num">Profile</th></tr></thead>
+   <tbody>${rows||emptyRow(editable?10:9,waiting("players")?"Loading players…":"No players ranked in this class yet.","players","Add player")}</tbody></table></div>`;
 }
 
 function vScouting(){
@@ -1175,12 +1224,33 @@ document.addEventListener("click",async e=>{
     if(col==="prospect"){openForm("players",null,{gradYear:UI.prClass||"2027",state:(UI.prState&&UI.prState!=="home")?UI.prState:"PA"});return}
     if(col==="tasks"&&UI.taskEvent)preset.eventId=UI.taskEvent;
     openForm(col,null,preset);return}
-  const mv=t.closest("[data-mv]");if(mv){e.stopPropagation();if(mv.disabled)return;
-    const list=S.players.filter(p=>isRanked(p)&&isHome(p)&&String(p.gradYear)===UI.rkClass&&(!UI.rkState||p.state===UI.rkState)).sort((a,b)=>(n(a.rank)||999)-(n(b.rank)||999)||String(a.name).localeCompare(String(b.name)));
-    const i=list.findIndex(p=>p.id===mv.dataset.id),j=mv.dataset.mv==="up"?i-1:i+1;if(i<0||j<0||j>=list.length)return;
-    const a=list[i],b=list[j];const ra=n(a.rank)||i+1,rb=n(b.rank)||j+1;
-    mv.disabled=true;
-    pdSet(a.id,{rank:rb});pdSet(b.id,{rank:ra===rb?(j>i?rb-1:rb+1):ra});refreshPD();
+  const mv=t.closest("[data-mv]");if(mv){e.stopPropagation();if(mv.disabled)return;const d=rkActive();if(!d||!db)return;
+    const ord=rkOrder(d).filter(x=>!UI.rkState||x.p.state===UI.rkState);
+    const i=ord.findIndex(x=>x.p.id===mv.dataset.id),j=mv.dataset.mv==="up"?i-1:i+1;if(i<0||j<0||j>=ord.length)return;
+    const ranks=Object.assign({},d.ranks),ra=ord[i].r,rb=ord[j].r;
+    ranks[ord[i].p.id]=rb;ranks[ord[j].p.id]=ra===rb?(j>i?rb-1:rb+1):ra;d.ranks=ranks;render();
+    try{await rkSaveDraft(d,ranks)}catch(err){alert(errText(err))}
+    return}
+  const jb=t.closest("[data-rkjump]");if(jb){e.stopPropagation();const d=rkActive();if(!d||!db)return;
+    const ord=rkOrder(d),p=byId("players",jb.dataset.rkjump);const cur=ord.findIndex(x=>x.p.id===p.id);
+    const v=parseInt(prompt(`Move ${p.name} to rank #`,String(cur+1))||"",10);if(!v||v<1)return;
+    const ids=ord.map(x=>x.p.id).filter(id=>id!==p.id);ids.splice(Math.min(v,ids.length+1)-1,0,p.id);
+    const ranks=Object.assign({},d.ranks);ids.forEach((id,k)=>ranks[id]=k+1);d.ranks=ranks;render();
+    try{await rkSaveDraft(d,ranks)}catch(err){alert(errText(err))}
+    return}
+  const ob=t.closest("[data-rkout]");if(ob){e.stopPropagation();const d=rkActive();if(!d||!db)return;const p=byId("players",ob.dataset.rkout);
+    if(!confirm(`Remove ${p.name} from "${d.name}"? Players below him move up one.`))return;
+    const ids=rkOrder(d).map(x=>x.p.id).filter(id=>id!==p.id);const ranks=Object.assign({},d.ranks);ids.forEach((id,k)=>ranks[id]=k+1);ranks[p.id]=null;d.ranks=ranks;render();
+    try{await rkSaveDraft(d,ranks)}catch(err){alert(errText(err))}
+    return}
+  const ra=t.closest("[data-rkact]");if(ra){e.stopPropagation();const d=rkActive();if(!d||!db)return;const act=ra.dataset.rkact;
+    try{
+      if(act==="rename"){const nm=(prompt("Rename this draft:",d.name)||"").trim();if(nm){d.name=nm;await db.collection("settings").doc(d.id).set(Object.assign(stripId(d),{name:nm}))}render()}
+      else if(act==="copy"){const nm=(prompt("Name for the copy:",d.name+" (copy)")||"").trim();if(!nm)return;const id="rkdraft-"+d.cls+"-"+Date.now().toString(36);const now=new Date().toISOString();
+        await db.collection("settings").doc(id).set({cls:d.cls,name:nm,ranks:Object.assign({},d.ranks),createdAt:now,createdBy:meName(),updatedAt:now,updatedBy:meName()});UI.rkVer=id;saveUI();render()}
+      else if(act==="delete"){if(!confirm(`Delete the draft "${d.name}"? This can't be undone. The published rankings aren't affected.`))return;await db.collection("settings").doc(d.id).delete();UI.rkVer="";saveUI();render()}
+      else if(act==="publish"){await rkPublish(d)}
+    }catch(err){alert(errText(err))}
     return}
   const pdb=t.closest("[data-pd]");if(pdb){e.stopPropagation();
     if(pdb.dataset.pd==="discard"){if(!confirm("Discard your unsaved player changes?"))return;Object.keys(PD).forEach(k=>delete PD[k]);savePD();refreshPD();return}
@@ -1217,6 +1287,9 @@ document.addEventListener("change",async e=>{
   const t=e.target,id=t.id;
   const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth"};
   if(map[id]){UI[map[id]]=t.value;saveUI();render();return}
+  if(id==="rk-ver"){if(t.value==="__new"){t.value=UI.rkVer||"";if(!db)return;try{await rkNewDraft()}catch(err){alert(errText(err))}return}UI.rkVer=t.value;saveUI();render();return}
+  if(id==="rk-class"){UI.rkClass=t.value;UI.rkVer="";saveUI();render();return}
+  if(id==="rk-addp"&&t.value){const d=rkActive();if(!d||!db)return;const ord=rkOrder(d);const ranks=Object.assign({},d.ranks);ranks[t.value]=(ord.length?ord[ord.length-1].r:0)+1;d.ranks=ranks;render();try{await rkSaveDraft(d,ranks)}catch(err){alert(errText(err))}return}
   if(id==="vid-file"){handleUpload([...t.files]);t.value="";return}
   if(id==="sc-me"||id==="sc-show"){UI[id==="sc-me"?"schedMe":"schedShow"]=t.value;saveUI();render();return}
   if(id==="pr-open"&&t.value){UI.profileFrom="prospects";UI.profile=t.value;vidDelArm=null;upState.msg="";render();window.scrollTo(0,0);return}
@@ -1270,7 +1343,7 @@ function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.
     let level=owners.includes(email)?"Full":null;
     if(!level){try{const a=await fs.collection("access").doc(email).get();if(a.exists)level=a.data().level==="Full"?"Full":"Partial"}catch(e){}}
     if(!level){dbState="off";sync.textContent="No access";gate(`<h2>Not on the staff list</h2><p>${esc(email)} doesn't have access to The Dugout yet. Ask Nathan to add this email on the Staff tab.</p><button type="button" id="g-out">Sign out</button>`);document.getElementById("g-out").onclick=()=>auth.signOut();return}
-    started=true;gated=false;
+    started=true;gated=false;ME_EMAIL=email;
     document.getElementById("tabs").hidden=false;
     db=fs;dbState="on";canWrite=true;isFull=level==="Full";
     if(isFull)document.getElementById("viewas").hidden=false;
@@ -1291,7 +1364,7 @@ function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.
         sync.textContent="Live · shared with your team";render();if(c==="staff"&&isFull)syncAccess()},paused);
     });
     if(!isFull)loaded.events=true;
-    if(isFull)db.collection("settings").onSnapshot(snap=>{const k={};const fr=[];let fm={};snap.docs.forEach(d=>{const v=d.data()||{};if(d.id==="forecast")S.fc=Object.assign({},S.fc,v);else if(d.id.indexOf("kpi-")===0)k[d.id.slice(4)]=v;else if(d.id==="fc27-meta")fm=v;else if(d.id.indexOf("fc27-")===0)fr.push(Object.assign({id:d.id},v))});S.kpi=k;S.fc27=fr;S.fc27meta=fm;loaded.fc27=true;render()},()=>{});
+    if(isFull)db.collection("settings").onSnapshot(snap=>{const k={};const fr=[];const rd=[];let fm={};snap.docs.forEach(d=>{const v=d.data()||{};if(d.id==="forecast")S.fc=Object.assign({},S.fc,v);else if(d.id.indexOf("kpi-")===0)k[d.id.slice(4)]=v;else if(d.id==="fc27-meta")fm=v;else if(d.id.indexOf("fc27-")===0)fr.push(Object.assign({id:d.id},v));else if(d.id.indexOf("rkdraft-")===0)rd.push(Object.assign({id:d.id},v))});S.rkDrafts=rd;S.kpi=k;S.fc27=fr;S.fc27meta=fm;loaded.fc27=true;render()},()=>{});
     /* Staff tab drives who can sign in: each staff email with Access = Full or Partial gets an access record. */
     let accBusy=false;
     async function syncAccess(){if(accBusy)return;accBusy=true;try{
