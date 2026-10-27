@@ -568,6 +568,7 @@ document.getElementById("dlg-form").addEventListener("submit",async ev=>{
   const btn=document.getElementById("dlg-save"); btn.disabled=true;
   try{
     let docId=rec&&rec.id;
+    if(rec&&col==="players"){pdSet(rec.id,out);closeForm();refreshPD();return}
     if(rec){const base=Object.assign({},byId(col,rec.id)||rec);delete base.id;await db.collection(F.col||col).doc(rec.id).set(Object.assign(base,out,{updatedAt:new Date().toISOString()}));}
     else if(col==="fc27"){docId="fc27-"+Date.now().toString(36);await db.collection("settings").doc(docId).set(Object.assign(out,{createdAt:new Date().toISOString()}));}
     else{const ref=await db.collection(col).add(Object.assign(out,{createdAt:new Date().toISOString()}));docId=ref&&ref.id;
@@ -789,14 +790,15 @@ function vRankings(){
   list.sort((a,b)=>(n(a.rank)||999)-(n(b.rank)||999)||String(a.name).localeCompare(String(b.name)));
   const nc=id=>S.notes.filter(x=>x.playerId===id).length;
   const mvmt=p=>{if(p.prevRank==null||p.prevRank===""){return p.source?'<span class="mvmt" style="color:var(--amber)">NEW</span>':""}const d=n(p.prevRank)-n(p.rank);return d>0?`<span class="mvmt var-pos">▲${d}</span>`:d<0?`<span class="mvmt var-neg">▼${-d}</span>`:'<span class="mvmt muted">–</span>'};
-  const rows=list.map((p,i)=>`<tr class="click" data-profile="${esc(p.id)}"><td class="rank" title="${esc(p.rankHistory||"")}">${esc(p.rank??"–")}${mvmt(p)}</td>
+  const rows=list.map((p,i)=>`<tr class="click" data-profile="${esc(p.id)}"><td class="rank" title="${esc(p.rankHistory||"")}">${esc(p.rank??"–")}${pdOn(p,"rank")?`<span class="mvmt" style="color:var(--amber)" title="Saved rank: ${esc((rawPlayer(p.id)||{}).rank??"none")}">DRAFT</span>`:mvmt(p)}</td>
     <td class="name" style="min-width:220px">${esc(p.name)}${aag(p)}${fg(p)}${sampleChip(p)}<span class="sub">${esc(p.school||"")}${p.state?", "+esc(p.state):""}</span>${p.notes?`<span class="blurb" title="${esc(p.notes)}">${esc(p.notes)}</span>`:""}</td><td>${esc(p.position||"")}<span class="sub">${esc(p.batsThrows||"")}${p.height?" · "+esc(p.height):""}${p.weight?" · "+esc(p.weight):""}</span></td>
     <td class="num">${p.fbVelo?esc(p.fbVelo):"—"}</td><td class="num">${p.exitVelo?esc(p.exitVelo):"—"}</td><td class="num">${p.sixty?Number(p.sixty).toFixed(2):"—"}</td><td class="num">${p.infVelo||p.ofVelo?esc(p.infVelo||p.ofVelo):"—"}</td>
     <td>${p.commitment?`<span class="chip good">${esc(p.commitment)}</span>`:'<span class="muted">Uncommitted</span>'}</td>
     <td class="num"><button class="small" data-profile="${esc(p.id)}">▶ Video &amp; notes${nc(p.id)||(p.videos||[]).length?` · ${nc(p.id)+(p.videos||[]).length}`:""}</button></td>
     <td><div class="mv"><button class="small" data-mv="up" data-id="${esc(p.id)}" aria-label="Move up"${i===0||!canWrite?" disabled":""}>▲</button><button class="small" data-mv="down" data-id="${esc(p.id)}" aria-label="Move down"${i===list.length-1||!canWrite?" disabled":""}>▼</button></div></td></tr>`).join("");
-  return `<div class="head"><div><h2>Class of ${esc(UI.rkClass)} Rankings</h2><p>Arrows under each rank show movement since the previous list. Click any player to open his profile, where you can add scouting notes, metrics and video. Use ▲▼ to swap a player with the one above or below.</p></div>
+  return `<div class="head"><div><h2>Class of ${esc(UI.rkClass)} Rankings</h2><p>Arrows under each rank show movement since the previous list. Click any player to open his profile, where you can add scouting notes, metrics and video. Use ▲▼ to swap a player with the one above or below. Changes stay private to you until you click <b>Save for everyone</b>.</p></div>
    <div class="toolbar">${selHTML("rk-class",UI.rkClass,["2027","2028","2029","2030"],"Class")}${selHTML("rk-state",UI.rkState,[["","PA + WV"],"PA","WV"],"State")}${addBtn("players","Add player")}</div></div>
+   ${draftBar()}
    <div class="tbl"><table><thead><tr><th>Rk</th><th>Player</th><th>Pos</th><th class="num">FB</th><th class="num">EV</th><th class="num">60</th><th class="num">INF/OF</th><th>Commit</th><th class="num">Profile</th><th>Move</th></tr></thead>
    <tbody>${rows||emptyRow(10,waiting("players")?"Loading players…":"No players ranked in this class yet.","players","Add player")}</tbody></table></div>`;
 }
@@ -826,6 +828,21 @@ function vScouting(){
 let assetsNS=null; const upState={busy:false,msg:"",err:false}; let vidDelArm=null;
 const isRanked=p=>has(p.rank);
 const mediaSrc=z=>z&&z.url?z.url:"";
+/* Player edits on Prospects/Rankings stay a private draft (this browser only) until "Save for everyone". */
+const PD=(()=>{try{return JSON.parse(localStorage.getItem("pbrPlayerDraft")||"{}")||{}}catch(e){return{}}})();
+let RAWP=[];
+const savePD=()=>{try{localStorage.setItem("pbrPlayerDraft",JSON.stringify(PD))}catch(e){}};
+const rawPlayer=id=>RAWP.find(p=>p.id===id);
+function applyPD(p){const d=PD[p.id];return d?Object.assign({},p,d):p}
+function setPlayers(arr){RAWP=arr;S.players=arr.map(applyPD)}
+function refreshPD(){S.players=RAWP.map(applyPD);render()}
+function pdSet(id,patch){const raw=rawPlayer(id)||{};const cur=Object.assign({},PD[id]||{},patch);
+  const nv=v=>v===""||v===undefined?null:(typeof v==="number"||(typeof v==="string"&&v.trim()!==""&&!isNaN(v)&&!/^0\d/.test(v.trim()))?Number(v):v);
+  Object.keys(cur).forEach(k=>{if(JSON.stringify(nv(raw[k]))===JSON.stringify(nv(cur[k])))delete cur[k]});
+  if(Object.keys(cur).length)PD[id]=cur;else delete PD[id];savePD()}
+const pdOn=(p,k)=>!!(PD[p.id]&&Object.prototype.hasOwnProperty.call(PD[p.id],k));
+const pdCount=()=>Object.keys(PD).filter(id=>rawPlayer(id)).length;
+function draftBar(){const c=pdCount();return c?`<div class="filt-on" role="status"><span><b>${c} player${c>1?"s have":" has"} unsaved changes.</b> Only you can see them until you save.</span><span style="display:flex;gap:6px"><button class="small" type="button" data-pd="discard">Discard</button><button class="small primary" type="button" data-pd="save"${canWrite&&db?"":" disabled"}>Save for everyone</button></span></div>`:""}
 /* ---------- 20–80 grading engine (PBR PA rules) ---------- */
 const GRADE_RULES_VERSION="2026-10-01";
 const gClamp=(x,a,b)=>Math.max(a,Math.min(b,x));
@@ -961,7 +978,7 @@ function gradePanelHTML(p){const g=gradeOf(p);if(!g.any&&!g.flags.length)return"
    ${fl.length?`<ul class="gflags">${fl.map(f=>`<li>${esc(f)}</li>`).join("")}</ul>`:""}
    <p class="muted" style="font-size:.78rem;margin:8px 0 0">Hit and Field come only from evaluator grades. Add them, plus any ± adjustments, under Edit info &amp; metrics.</p></div>`}
 function vProspects(){
-  if(UI.profile&&byId("players",UI.profile))return vProfile(byId("players",UI.profile));
+  if(UI.profile&&byId("players",UI.profile))return draftBar()+vProfile(byId("players",UI.profile));
   const q=(UI.prQ||"").toLowerCase();
   let list=S.players.slice();
   if(UI.prRank==="ranked")list=list.filter(isRanked);else if(UI.prRank==="unranked")list=list.filter(p=>!isRanked(p));
@@ -995,6 +1012,7 @@ function vProspects(){
    </div></div>
    <div class="head"><div><h2>Prospects</h2><p>Every player in the database: ranked players and prospects you're tracking. ${num(list.length)} shown. Click a player to open his profile. Give a prospect a rank to add him to the Rankings tab.</p></div>
    <div class="toolbar"><label class="inline" for="pr-q">Search<input id="pr-q" type="search" value="${esc(UI.prQ||"")}" placeholder="Name, school, position" style="min-width:180px"></label>${selHTML("pr-class",UI.prClass||"",[["","All classes"],"2027","2028","2029","2030","2031","2032"],"Class")}${selHTML("pr-state",UI.prState||"",[["","All states"],["home","PA + WV"]].concat(stateList().map(([st,c])=>[st,st+" ("+c+")"])),"State")}${selHTML("pr-rank",UI.prRank||"",[["","Ranked + unranked"],["ranked","Ranked only"],["unranked","All unranked"],["watch","Watch list"],["padd","Potential adds"],["other","Other prospects"]],"Show")}${selHTML("pr-sort",UI.prSort||"",[["","Rank (default)"],["overall","Overall grade, by class"],["ofp","Hitting OFP, by class"],["fb","Pitching grade, by class"],["cross","Cross-class OFP"]],"Sort")}<button class="primary" data-add="prospect"${canWrite&&db?"":" disabled"}>+ Add prospect</button></div></div>
+   ${draftBar()}
    ${(()=>{const A=S.players,rk=A.filter(isRanked).length,wl=A.filter(p=>!isRanked(p)&&p.listTag==="Watch list").length,pa=A.filter(p=>!isRanked(p)&&p.listTag==="Potential add").length,ot=A.length-rk-wl-pa;
      const cell=(v,l,k)=>`<button type="button" class="trk${(UI.prRank||"")===k?" on":""}" data-prk="${k}"><b>${num(v)}</b><span>${l}</span></button>`;
      return `<div class="tracker" role="group" aria-label="Prospect counts">${cell(A.length,"Total players","")}${cell(rk,"Ranked","ranked")}${cell(A.length-rk,"Unranked","unranked")}${cell(wl,"Watch list","watch")}${cell(pa,"Potential adds","padd")}${ot?cell(ot,"Other prospects","other"):""}<div class="trk-show">Showing <b>${num(list.length)}</b></div></div>`})()}
@@ -1135,7 +1153,7 @@ document.addEventListener("click",async e=>{
    if(e.target.closest("[data-tncancel]")){UI.toolEdit=null;UI.tnDraft=null;render();return}
    const sv=e.target.closest("[data-tnsave]");if(sv&&UI.profile){const p=byId("players",UI.profile);if(!p||!db)return;const k=sv.dataset.tnsave,el=document.getElementById("tn-input");const txt=(el?el.value:(UI.tnDraft||"")).trim();
      const tn=Object.assign({},p.toolNotes||{});if(txt)tn[k]={text:txt,at:new Date().toISOString()};else delete tn[k];
-     sv.disabled=true;try{await db.collection("players").doc(p.id).update({toolNotes:tn});p.toolNotes=tn;UI.toolEdit=null;UI.tnDraft=null}catch(x){alert(errText(x))}render();return}}
+     pdSet(p.id,{toolNotes:tn});UI.toolEdit=null;UI.tnDraft=null;refreshPD();return}}
   const t=e.target;
   if(t.id==="clear-samples"){
     if(!UI.clearArm){UI.clearArm=true;render();return}
@@ -1157,6 +1175,19 @@ document.addEventListener("click",async e=>{
     if(col==="prospect"){openForm("players",null,{gradYear:UI.prClass||"2027",state:(UI.prState&&UI.prState!=="home")?UI.prState:"PA"});return}
     if(col==="tasks"&&UI.taskEvent)preset.eventId=UI.taskEvent;
     openForm(col,null,preset);return}
+  const mv=t.closest("[data-mv]");if(mv){e.stopPropagation();if(mv.disabled)return;
+    const list=S.players.filter(p=>isRanked(p)&&isHome(p)&&String(p.gradYear)===UI.rkClass&&(!UI.rkState||p.state===UI.rkState)).sort((a,b)=>(n(a.rank)||999)-(n(b.rank)||999)||String(a.name).localeCompare(String(b.name)));
+    const i=list.findIndex(p=>p.id===mv.dataset.id),j=mv.dataset.mv==="up"?i-1:i+1;if(i<0||j<0||j>=list.length)return;
+    const a=list[i],b=list[j];const ra=n(a.rank)||i+1,rb=n(b.rank)||j+1;
+    mv.disabled=true;
+    pdSet(a.id,{rank:rb});pdSet(b.id,{rank:ra===rb?(j>i?rb-1:rb+1):ra});refreshPD();
+    return}
+  const pdb=t.closest("[data-pd]");if(pdb){e.stopPropagation();
+    if(pdb.dataset.pd==="discard"){if(!confirm("Discard your unsaved player changes?"))return;Object.keys(PD).forEach(k=>delete PD[k]);savePD();refreshPD();return}
+    if(!db)return;pdb.disabled=true;const ids=Object.keys(PD).filter(id=>rawPlayer(id));
+    try{for(const id of ids){await db.collection("players").doc(id).update(Object.assign({},PD[id],{updatedAt:new Date().toISOString()}));delete PD[id];savePD()}refreshPD()}
+    catch(err){savePD();refreshPD();alert("Some changes didn't save. They're still in your draft; try again.")}
+    return}
   const pf=t.closest("[data-profile]");if(pf){e.stopPropagation();UI.profileFrom=UI.tab;UI.profile=pf.dataset.profile;vidDelArm=null;upState.msg="";if(UI.tab!=="prospects"){try{history.replaceState(null,"","#prospects")}catch(x){}}setTab("prospects");window.scrollTo(0,0);return}
   if(t.closest("[data-back]")){const from=UI.profileFrom||"prospects";UI.profile="";UI.profileFrom="";if(from!=="prospects"){try{history.replaceState(null,"","#"+from)}catch(x){}}setTab(from);return}
   const an=t.closest("[data-addnote]");if(an&&!an.disabled){openForm("notes",null,{playerId:an.dataset.addnote,date:todayISO()});return}
@@ -1169,13 +1200,6 @@ document.addEventListener("click",async e=>{
     vidDelArm=null;const p=byId("players",UI.profile);if(!p)return;const vids=(p.videos||[]).slice();const v=vids.splice(i,1)[0];
     try{await saveVideos(p,vids);if(v&&v.id&&assetsNS){try{await assetsNS.delete(v.id)}catch(x){}}}catch(x){upState.msg="Couldn't remove that video. Try again.";upState.err=true;render()}return}
   const nf=t.closest("[data-notesfor]");if(nf){e.stopPropagation();UI.ntPlayer=nf.dataset.notesfor;UI.ntScout="";UI.ntFollow=false;try{history.replaceState(null,"","#scouting")}catch(x){}setTab("scouting");window.scrollTo(0,0);return}
-  const mv=t.closest("[data-mv]");if(mv){e.stopPropagation();if(mv.disabled)return;
-    const list=S.players.filter(p=>isRanked(p)&&isHome(p)&&String(p.gradYear)===UI.rkClass&&(!UI.rkState||p.state===UI.rkState)).sort((a,b)=>(n(a.rank)||999)-(n(b.rank)||999)||String(a.name).localeCompare(String(b.name)));
-    const i=list.findIndex(p=>p.id===mv.dataset.id),j=mv.dataset.mv==="up"?i-1:i+1;if(i<0||j<0||j>=list.length)return;
-    const a=list[i],b=list[j];const ra=n(a.rank)||i+1,rb=n(b.rank)||j+1;
-    mv.disabled=true;
-    try{await db.collection("players").doc(a.id).update({rank:rb});await db.collection("players").doc(b.id).update({rank:ra===rb?(j>i?rb-1:rb+1):ra})}catch(err){}
-    return}
   if(t.closest("select,input,button:not([data-edit])"))return;
   const ed=t.closest("[data-edit]");if(ed){const r=byId(ed.dataset.edit,ed.dataset.id);if(r)openForm(ed.dataset.edit,r)}
 });
@@ -1257,7 +1281,7 @@ function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.
       if(C.storage===false)assetsNS=null;}catch(e){assetsNS=null}
     render();
     const CLS=["2027","2028","2029","2030"], parts={};
-    const mergePlayers=()=>{S.players=[].concat(...Object.values(parts));loaded.players=Object.keys(parts).length>=CLS.length+1;sync.textContent="Live · shared with your team";render()};
+    const mergePlayers=()=>{setPlayers([].concat(...Object.values(parts)));loaded.players=Object.keys(parts).length>=CLS.length+1;sync.textContent="Live · shared with your team";render()};
     const paused=()=>{sync.textContent="Sync paused. Reload to reconnect."};
     CLS.map(y=>[y,db.collection("players").where("gradYear","==",y)]).concat([["other",db.collection("players").where("gradYear","not-in",CLS)]]).forEach(([k,q])=>{
       q.onSnapshot(snap=>{parts[k]=snap.docs.map(d=>Object.assign({id:d.id},d.data()));mergePlayers()},paused);
