@@ -354,6 +354,17 @@ const EXP=[["expVenue","Venue"],["expStaff","Staff pay"],["expTravel","Travel"],
 const has=v=>v!=null&&v!=="";
 const HOME_STATES=["PA","WV"];
 const isHome=p=>!p.state||HOME_STATES.includes(p.state);
+/* Ranking regions: each has its own numbered list. */
+const NE_STATES=["CT","RI","NH","VT","ME","MA"];
+const RANK_STATES=["PA","WV","NY","NJ"].concat(NE_STATES);
+const regionOf=st=>{st=st||"PA";return st==="PA"||st==="WV"?"PAWV":st==="NY"?"NY":st==="NJ"?"NJ":NE_STATES.includes(st)?"NE":null};
+const REGION_LABEL={PAWV:"PA + WV",NY:"New York",NJ:"New Jersey",NE:"New England"};
+const rkRegion=()=>{const v=UI.rkState||"";return v===""||v==="PA"||v==="WV"?"PAWV":v==="NE"?"NE":regionOf(v)||"PAWV"};
+const POS_FILTERS=[["","All positions"],["P","Pitchers (RHP + LHP)"],["RHP","RHP"],["LHP","LHP"],["C","C"],["1B","1B"],["2B","2B"],["3B","3B"],["SS","SS"],["IF","Infield (1B/2B/3B/SS)"],["OF","OF (LF/CF/RF)"],["2W","Two-way"]];
+const posTokens=p=>String(p.position||"").toUpperCase().split(/[\/.,\s]+/).filter(Boolean);
+function posMatch(p,f){if(!f)return true;const t=posTokens(p),isP=t.some(x=>["RHP","LHP","P"].includes(x)),hit=t.some(x=>!["RHP","LHP","P"].includes(x));
+  if(f==="P")return isP;if(f==="2W")return isP&&hit;if(f==="IF")return t.some(x=>["1B","2B","3B","SS","IF","INF","MIF","CIF"].includes(x));if(f==="OF")return t.some(x=>["OF","LF","CF","RF"].includes(x));return t.includes(f)}
+function stMatch(p){const v=UI.rkState||"";if(v===""||v==="NE")return true;return (p.state||"PA")===v}
 const stateList=()=>{const c={};S.players.forEach(p=>{const st=p.state||"";if(st)c[st]=(c[st]||0)+1});return Object.entries(c).sort((a,b)=>(HOME_STATES.indexOf(a[0])+1||99)-(HOME_STATES.indexOf(b[0])+1||99)||b[1]-a[1]||a[0].localeCompare(b[0]))};
 function calc(e){
   const done=e.status==="Completed", hasRev=has(e.netRevenue);
@@ -564,7 +575,7 @@ document.getElementById("dlg-form").addEventListener("submit",async ev=>{
       if(f.req&&!raw){showErr({message:f.l+" is required"});return}
       out[f.k]=f.t==="number"?(raw===""?null:parseFloat(raw)):raw;}
   }
-  if(col==="players"&&out.rank!=null&&out.state&&!HOME_STATES.includes(out.state)){showErr({message:"Only PA and WV players can be ranked. Clear the rank to keep this "+out.state+" player as a prospect"});return}
+  if(col==="players"&&out.rank!=null&&out.state&&!RANK_STATES.includes(out.state)){showErr({message:"Only PA, WV, NY, NJ and New England players can be ranked. Clear the rank to keep this "+out.state+" player as a prospect"});return}
   if(col==="notes"){if(noteUp.busy){showErr({message:"Wait for the upload to finish"});return}out.videos=(editing.vids||[]).slice()}
   const btn=document.getElementById("dlg-save"); btn.disabled=true;
   try{
@@ -822,9 +833,10 @@ function vTasks(){
 /* ---------- ranking versions: shared rough drafts per class (settings/rkdraft-*) ---------- */
 let ME_EMAIL="";
 const meName=()=>{const st=S.staff.find(x=>ME_EMAIL&&String(x.email||"").toLowerCase()===ME_EMAIL);return st?st.name:(ME_EMAIL||"Staff")};
-const rkHome=p=>isHome(p)&&String(p.gradYear)===UI.rkClass;
-const rkDraftsFor=c=>(S.rkDrafts||[]).filter(d=>d.cls===c&&!d.deleted).sort((a,b)=>String(a.createdAt||"").localeCompare(String(b.createdAt||"")));
-const rkActive=()=>{const d=(S.rkDrafts||[]).find(x=>x.id===UI.rkVer&&x.cls===UI.rkClass&&!x.deleted);return d||null};
+const rkHome=p=>regionOf(p.state)===rkRegion()&&String(p.gradYear)===UI.rkClass;
+const rkVisible=p=>stMatch(p)&&posMatch(p,UI.rkPos||"");
+const rkDraftsFor=c=>(S.rkDrafts||[]).filter(d=>d.cls===c&&!d.deleted&&(d.region||"PAWV")===rkRegion()).sort((a,b)=>String(a.createdAt||"").localeCompare(String(b.createdAt||"")));
+const rkActive=()=>{const d=(S.rkDrafts||[]).find(x=>x.id===UI.rkVer&&x.cls===UI.rkClass&&!x.deleted&&(x.region||"PAWV")===rkRegion());return d||null};
 function rkOrder(d){ /* players in this class ordered by the draft (or published) ranks */
   const r=p=>d?(Object.prototype.hasOwnProperty.call(d.ranks||{},p.id)?d.ranks[p.id]:p.rank):p.rank;
   return S.players.filter(p=>rkHome(p)&&has(r(p))).map(p=>({p,r:n(r(p))})).sort((a,b)=>a.r-b.r||String(a.p.name).localeCompare(String(b.p.name)));
@@ -833,15 +845,15 @@ async function rkSaveDraft(d,ranks){await db.collection("settings").doc(d.id).se
 const stripId=o=>{const x=Object.assign({},o);delete x.id;return x};
 async function rkNewDraft(){
   const c=UI.rkClass,k=rkDraftsFor(c).length+1;
-  const name=(prompt(`Name this Class of ${c} draft:`,`Draft ${k}`)||"").trim();if(!name)return;
+  const name=(prompt(`Name this Class of ${c} ${REGION_LABEL[rkRegion()]} draft:`,`Draft ${k}`)||"").trim();if(!name)return;
   const ranks={};rkOrder(null).forEach(x=>ranks[x.p.id]=x.r);
   const id="rkdraft-"+c+"-"+Date.now().toString(36);
-  await db.collection("settings").doc(id).set({cls:c,name,ranks,createdAt:new Date().toISOString(),createdBy:meName(),updatedAt:new Date().toISOString(),updatedBy:meName()});
+  await db.collection("settings").doc(id).set({cls:c,region:rkRegion(),name,ranks,createdAt:new Date().toISOString(),createdBy:meName(),updatedAt:new Date().toISOString(),updatedBy:meName()});
   UI.rkVer=id;saveUI();render();
 }
 async function rkPublish(d){
   const ord=rkOrder(d);
-  if(!confirm(`Publish "${d.name}" as the official Class of ${d.cls} rankings?\n\nEveryone will see this order, and the arrows will show movement from the current published list.`))return;
+  if(!confirm(`Publish "${d.name}" as the official Class of ${d.cls} ${REGION_LABEL[d.region||"PAWV"]} rankings?\n\nEveryone will see this order, and the arrows will show movement from the current published list.`))return;
   const today=new Date(),stamp=(today.getMonth()+1)+"/"+today.getDate()+"/"+today.getFullYear(),now=today.toISOString();
   const inDraft=new Set(ord.map(x=>x.p.id));
   const ups=[];
@@ -861,13 +873,13 @@ function vRankings(){
   if(UI.rkVer&&!rkActive())UI.rkVer="";
   const d=canDraft?rkActive():null;
   let ord=rkOrder(d);
-  const list=ord.map(x=>x.p).filter(p=>!UI.rkState||p.state===UI.rkState);
+  const list=ord.map(x=>x.p).filter(rkVisible);const posOn=!!UI.rkPos;
   const rOf=p=>d?(Object.prototype.hasOwnProperty.call(d.ranks||{},p.id)?d.ranks[p.id]:p.rank):p.rank;
   const nc=id=>S.notes.filter(x=>x.playerId===id).length;
   const mvmt=p=>{const cur=rOf(p);if(d){const pub=p.rank;if(!has(pub))return'<span class="mvmt" style="color:var(--amber)">NEW</span>';const dd=n(pub)-n(cur);return dd>0?`<span class="mvmt var-pos" title="vs published #${esc(pub)}">▲${dd}</span>`:dd<0?`<span class="mvmt var-neg" title="vs published #${esc(pub)}">▼${-dd}</span>`:'<span class="mvmt muted">–</span>'}
     if(p.prevRank==null||p.prevRank===""){return p.source?'<span class="mvmt" style="color:var(--amber)">NEW</span>':""}const dd=n(p.prevRank)-n(cur);return dd>0?`<span class="mvmt var-pos">▲${dd}</span>`:dd<0?`<span class="mvmt var-neg">▼${-dd}</span>`:'<span class="mvmt muted">–</span>'};
   const editable=!!d&&canWrite;
-  const rows=list.map((p,i)=>`<tr class="click" data-profile="${esc(p.id)}"><td class="rank" title="${esc(p.rankHistory||"")}">${esc(rOf(p)??"–")}${!d&&pdOn(p,"rank")?`<span class="mvmt" style="color:var(--amber)" title="Saved rank: ${esc((rawPlayer(p.id)||{}).rank??"none")}">DRAFT</span>`:mvmt(p)}</td>${editable?`<td><div class="mv"><button class="small" data-mv="up" data-id="${esc(p.id)}" aria-label="Move up"${i===0?" disabled":""}>▲</button><button class="small" data-mv="down" data-id="${esc(p.id)}" aria-label="Move down"${i===list.length-1?" disabled":""}>▼</button><button class="small" data-rkjump="${esc(p.id)}" aria-label="Move to rank number" title="Move to rank #">#</button><button class="small" data-rkout="${esc(p.id)}" aria-label="Remove from this draft" title="Remove from this draft">✕</button></div></td>`:""}
+  const rows=list.map((p,i)=>`<tr class="click" data-profile="${esc(p.id)}"><td class="rank" title="${esc(p.rankHistory||"")}">${esc(rOf(p)??"–")}${!d&&pdOn(p,"rank")?`<span class="mvmt" style="color:var(--amber)" title="Saved rank: ${esc((rawPlayer(p.id)||{}).rank??"none")}">DRAFT</span>`:mvmt(p)}</td>${editable?`<td><div class="mv"><button class="small" data-mv="up" data-id="${esc(p.id)}" aria-label="Move up"${i===0||posOn?" disabled":""}${posOn?' title="Clear the position filter to swap neighbors; # still works"':""}>▲</button><button class="small" data-mv="down" data-id="${esc(p.id)}" aria-label="Move down"${i===list.length-1||posOn?" disabled":""}>▼</button><button class="small" data-rkjump="${esc(p.id)}" aria-label="Move to rank number" title="Move to rank #">#</button><button class="small" data-rkout="${esc(p.id)}" aria-label="Remove from this draft" title="Remove from this draft">✕</button></div></td>`:""}
     <td class="name" style="min-width:220px">${esc(p.name)}${aag(p)}${fg(p)}${sampleChip(p)}<span class="sub">${esc(p.school||"")}${p.state?", "+esc(p.state):""}</span>${p.notes?`<span class="blurb" title="${esc(p.notes)}">${esc(p.notes)}</span>`:""}</td><td>${esc(p.position||"")}<span class="sub">${esc(p.batsThrows||"")}${p.height?" · "+esc(p.height):""}${p.weight?" · "+esc(p.weight):""}</span></td>
     <td class="num">${p.fbVelo?esc(p.fbVelo):"—"}</td><td class="num">${p.exitVelo?esc(p.exitVelo):"—"}</td><td class="num">${p.sixty?Number(p.sixty).toFixed(2):"—"}</td><td class="num">${p.infVelo||p.ofVelo?esc(p.infVelo||p.ofVelo):"—"}</td>
     <td>${p.commitment?`<span class="chip good">${esc(p.commitment)}</span>`:'<span class="muted">Uncommitted</span>'}</td>
@@ -879,8 +891,8 @@ function vRankings(){
   const bar=d?`<div class="filt-on" role="status" style="background:var(--amber-soft)"><span><b>Draft: ${esc(d.name)}</b> · ${num(ord.length)} players · started by ${esc(d.createdBy||"")}${d.updatedAt?` · last edit ${esc(d.updatedBy||"")} ${esc(when(d.updatedAt))}`:""}${d.publishedAt?` · <b>published ${esc(when(d.publishedAt))}</b>`:""}. Full-time staff see and edit this draft together; the official rankings don't change until you publish.</span>
      <span style="display:flex;gap:6px;flex-wrap:wrap"><button class="small" type="button" data-rkact="rename">Rename</button><button class="small" type="button" data-rkact="copy">Duplicate</button><button class="small danger" type="button" data-rkact="delete">Delete</button><button class="small primary" type="button" data-rkact="publish"${canWrite?"":" disabled"}>Publish as official</button></span>${(()=>{const inD=new Set(ord.map(x=>x.p.id));const pool=S.players.filter(p=>rkHome(p)&&!inD.has(p.id)).sort((a,b)=>String(a.name).localeCompare(String(b.name)));return pool.length?`<label class="inline" for="rk-addp" style="flex-basis:100%">Add a player to this draft (goes to the bottom)<select id="rk-addp"><option value="">Choose a ${esc(UI.rkClass)} player…</option>${pool.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}${p.school?" · "+esc(p.school):""}</option>`).join("")}</select></label>`:""})()}</div>`
     :canDraft?`<p class="muted" style="margin:0 0 10px;font-size:.85rem">You're viewing the <b>published</b> rankings. To rework the order, pick or start a draft from <b>Version</b>${drafts.length?` (${drafts.length} draft${drafts.length>1?"s":""} for ${esc(UI.rkClass)})`:""}.</p>`:"";
-  return `<div class="head"><div><h2>Class of ${esc(UI.rkClass)} Rankings${d?' <span class="chip warn" style="font-size:.7rem;vertical-align:middle">Draft</span>':""}</h2><p>${d?"Arrows show movement versus the published rankings. Use ▲▼ to swap neighbors, # to jump a player to any rank, ✕ to drop him from this draft. Edits save to the draft right away.":"Arrows under each rank show movement since the previous published list. Click any player to open his profile, where you can add scouting notes, metrics and video."}</p></div>
-   <div class="toolbar">${selHTML("rk-class",UI.rkClass,["2027","2028","2029","2030"],"Class")}${verSel}${selHTML("rk-state",UI.rkState,[["","PA + WV"],"PA","WV"],"State")}${addBtn("players","Add player")}</div></div>
+  return `<div class="head"><div><h2>Class of ${esc(UI.rkClass)} ${esc(REGION_LABEL[rkRegion()])} Rankings${UI.rkState&&UI.rkState!=="NE"&&rkRegion()!==UI.rkState?` <span class="chip" style="font-size:.7rem;vertical-align:middle">${esc(UI.rkState)} only</span>`:""}${UI.rkPos?` <span class="chip" style="font-size:.7rem;vertical-align:middle">${esc((POS_FILTERS.find(x=>x[0]===UI.rkPos)||["",""])[1])}</span>`:""}${d?' <span class="chip warn" style="font-size:.7rem;vertical-align:middle">Draft</span>':""}</h2><p>${d?"Arrows show movement versus the published rankings. Use ▲▼ to swap neighbors, # to jump a player to any rank, ✕ to drop him from this draft. Edits save to the draft right away.":"Arrows under each rank show movement since the previous published list. Click any player to open his profile, where you can add scouting notes, metrics and video."}</p></div>
+   <div class="toolbar">${selHTML("rk-class",UI.rkClass,["2027","2028","2029","2030"],"Class")}${verSel}${selHTML("rk-state",UI.rkState,[["","PA + WV"],["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England (all)"],["CT","CT"],["RI","RI"],["NH","NH"],["VT","VT"],["ME","Maine"],["MA","MA"]],"State")}${selHTML("rk-pos",UI.rkPos||"",POS_FILTERS,"Position")}${addBtn("players","Add player")}</div></div>
    ${bar}${d?"":draftBar()}
    <div class="tbl"><table><thead><tr><th>Rk</th>${editable?"<th>Move</th>":""}<th>Player</th><th>Pos</th><th class="num">FB</th><th class="num">EV</th><th class="num">60</th><th class="num">INF/OF</th><th>Commit</th><th class="num">Profile</th></tr></thead>
    <tbody>${rows||emptyRow(editable?10:9,waiting("players")?"Loading players…":"No players ranked in this class yet.","players","Add player")}</tbody></table></div>`;
@@ -1181,7 +1193,7 @@ function vProspects(){
   const pager=pos=>{if(pages<2)return"";const win=[];for(let i=1;i<=pages;i++){if(i===1||i===pages||Math.abs(i-pg)<=2)win.push(i);else if(win[win.length-1]!=="…")win.push("…")}
     return `<nav class="pager ${pos}" aria-label="Prospect list pages"><button type="button" data-pg="${pg-1}"${pg===1?" disabled":""}>‹ Prev</button>${win.map(i=>i==="…"?'<span class="pg-gap">…</span>':`<button type="button" data-pg="${i}"${i===pg?' aria-current="page" class="on"':""}>${i}</button>`).join("")}<button type="button" data-pg="${pg+1}"${pg===pages?" disabled":""}>Next ›</button><span class="pg-info">${num(from+1)}–${num(from+pageList.length)} of ${num(list.length)}</span></nav>`};
   const rows=pageList.map(p=>{const v=Array.isArray(p.videos)?p.videos.length:0;
-    return `<tr class="click" data-profile="${esc(p.id)}"><td class="rank" style="font-size:1.15rem">${isRanked(p)?"#"+esc(p.rank):`<span class="chip${p.listTag?" warn":""}" style="font-family:var(--f-body)">${esc(p.listTag||"Unranked")}</span>`}</td><td class="name" style="min-width:200px">${esc(p.name)}${aag(p)}${fg(p)}<span class="sub">${esc([p.school,p.state].filter(Boolean).join(", "))}</span></td><td class="gcol">${gradeChips(p)}</td><td>${esc(p.gradYear||"")}</td><td>${esc(p.position||"")}</td>
+    return `<tr class="click" data-profile="${esc(p.id)}"><td class="rank" style="font-size:1.15rem">${isRanked(p)?"#"+esc(p.rank)+(regionOf(p.state)&&regionOf(p.state)!=="PAWV"?`<span class="mvmt muted" style="font-size:.65rem">${esc(regionOf(p.state)==="NE"?"N. Eng":regionOf(p.state))}</span>`:""):`<span class="chip${p.listTag?" warn":""}" style="font-family:var(--f-body)">${esc(p.listTag||"Unranked")}</span>`}</td><td class="name" style="min-width:200px">${esc(p.name)}${aag(p)}${fg(p)}<span class="sub">${esc([p.school,p.state].filter(Boolean).join(", "))}</span></td><td class="gcol">${gradeChips(p)}</td><td>${esc(p.gradYear||"")}</td><td>${esc(p.position||"")}</td>
     <td class="num">${p.fbVelo?esc(p.fbVelo):"—"}</td><td class="num">${p.exitVelo?esc(p.exitVelo):"—"}</td><td class="num">${p.sixty?Number(p.sixty).toFixed(2):"—"}</td><td class="num">${p.infVelo||p.ofVelo?esc(p.infVelo||p.ofVelo):"—"}</td>
     <td class="num">${nc(p.id)}</td><td class="num">${v}</td><td style="text-align:center">${fuBtn(p)}</td></tr>`}).join("");
   const all=S.players.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
@@ -1221,7 +1233,7 @@ function vProfile(p){
     const media=(v.type||"").startsWith("image/")?`<img src="${src}" alt="${esc(v.name||"Photo")}" loading="lazy">`:`<video src="${src}" controls preload="metadata" playsinline></video>`;
     return `<div class="vid">${media}<div class="vid-meta"><span style="min-width:0;overflow-wrap:anywhere">${esc(v.name||"Video")}<span class="sub">${fmtDate((v.addedAt||"").slice(0,10))}${v.sizeBytes?" · "+(v.sizeBytes/1048576).toFixed(1)+" MB":""}</span></span>${del}</div></div>`};
   return `<div class="head"><div><button class="small" data-back="1">← Back</button>
-     <h2 style="margin-top:8px">${esc(p.name)}${aag(p)}${fg(p)}</h2><p>${esc(["Class of "+(p.gradYear||"?"),p.position,p.batsThrows,[p.school,p.state].filter(Boolean).join(", ")].filter(Boolean).join(" · "))}</p><p class="chips-line">${fuBtn(p,true)} ${isRanked(p)?`<span class="chip acc">Ranked #${esc(p.rank)}</span>`:`<span class="chip${p.listTag?" warn":""}">${esc(p.listTag||"Unranked")}</span>`}${p.commitment?` <span class="chip good">${esc(p.commitment)}</span>`:""}${p.pbrProfile?` <a class="pbrlink" href="${esc(p.pbrProfile)}" target="_blank" rel="noopener">PBR profile ↗</a>`:""}</p></div>
+     <h2 style="margin-top:8px">${esc(p.name)}${aag(p)}${fg(p)}</h2><p>${esc(["Class of "+(p.gradYear||"?"),p.position,p.batsThrows,[p.school,p.state].filter(Boolean).join(", ")].filter(Boolean).join(" · "))}</p><p class="chips-line">${fuBtn(p,true)} ${isRanked(p)?`<span class="chip acc">Ranked #${esc(p.rank)}${regionOf(p.state)&&regionOf(p.state)!=="PAWV"?" · "+esc(REGION_LABEL[regionOf(p.state)]):""}</span>`:`<span class="chip${p.listTag?" warn":""}">${esc(p.listTag||"Unranked")}</span>`}${p.commitment?` <span class="chip good">${esc(p.commitment)}</span>`:""}${p.pbrProfile?` <a class="pbrlink" href="${esc(p.pbrProfile)}" target="_blank" rel="noopener">PBR profile ↗</a>`:""}</p></div>
      <div class="toolbar"><button data-edit="players" data-id="${esc(p.id)}"${canWrite?"":" disabled"}>Edit info &amp; metrics</button></div></div>
    <div class="grid2">
     <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
@@ -1364,7 +1376,7 @@ document.addEventListener("click",async e=>{
   if(t.closest("[data-tmdismiss]")){UI.taskMail=null;render();return}
   if(t.closest('a[href^="mailto:"],a[data-tmail],td a[target="_blank"]')){e.stopPropagation();if(t.closest("[data-tmail]"))setTimeout(()=>{UI.taskMail=null;render()},400);return}
   const mv=t.closest("[data-mv]");if(mv){e.stopPropagation();if(mv.disabled)return;const d=rkActive();if(!d||!db)return;
-    const ord=rkOrder(d).filter(x=>!UI.rkState||x.p.state===UI.rkState);
+    const ord=rkOrder(d).filter(x=>rkVisible(x.p));
     const i=ord.findIndex(x=>x.p.id===mv.dataset.id),j=mv.dataset.mv==="up"?i-1:i+1;if(i<0||j<0||j>=ord.length)return;
     const ranks=Object.assign({},d.ranks),ra=ord[i].r,rb=ord[j].r;
     ranks[ord[i].p.id]=rb;ranks[ord[j].p.id]=ra===rb?(j>i?rb-1:rb+1):ra;d.ranks=ranks;render();
@@ -1386,7 +1398,7 @@ document.addEventListener("click",async e=>{
     try{
       if(act==="rename"){const nm=(prompt("Rename this draft:",d.name)||"").trim();if(nm){d.name=nm;await db.collection("settings").doc(d.id).set(Object.assign(stripId(d),{name:nm}))}render()}
       else if(act==="copy"){const nm=(prompt("Name for the copy:",d.name+" (copy)")||"").trim();if(!nm)return;const id="rkdraft-"+d.cls+"-"+Date.now().toString(36);const now=new Date().toISOString();
-        await db.collection("settings").doc(id).set({cls:d.cls,name:nm,ranks:Object.assign({},d.ranks),createdAt:now,createdBy:meName(),updatedAt:now,updatedBy:meName()});UI.rkVer=id;saveUI();render()}
+        await db.collection("settings").doc(id).set({cls:d.cls,region:d.region||"PAWV",name:nm,ranks:Object.assign({},d.ranks),createdAt:now,createdBy:meName(),updatedAt:now,updatedBy:meName()});UI.rkVer=id;saveUI();render()}
       else if(act==="delete"){if(!confirm(`Delete the draft "${d.name}"? This can't be undone. The published rankings aren't affected.`))return;await db.collection("settings").doc(d.id).delete();UI.rkVer="";saveUI();render()}
       else if(act==="publish"){await rkPublish(d)}
     }catch(err){alert(errText(err))}
@@ -1433,6 +1445,7 @@ document.addEventListener("change",async e=>{
   if(id==="tk-mail"){MAILP.pref=t.value;try{localStorage.setItem("pbrMailPref",t.value)}catch(x){}render();return}
   if(id==="rk-ver"){if(t.value==="__new"){t.value=UI.rkVer||"";if(!db)return;try{await rkNewDraft()}catch(err){alert(errText(err))}return}UI.rkVer=t.value;saveUI();render();return}
   if(id==="rk-class"){UI.rkClass=t.value;UI.rkVer="";saveUI();render();return}
+  if(id==="rk-pos"){UI.rkPos=t.value;saveUI();render();return}
   if(id==="rk-addp"&&t.value){const d=rkActive();if(!d||!db)return;const ord=rkOrder(d);const ranks=Object.assign({},d.ranks);ranks[t.value]=(ord.length?ord[ord.length-1].r:0)+1;d.ranks=ranks;render();try{await rkSaveDraft(d,ranks)}catch(err){alert(errText(err))}return}
   if(id==="vid-file"){handleUpload([...t.files]);t.value="";return}
   if(id==="sc-me"||id==="sc-show"){UI[id==="sc-me"?"schedMe":"schedShow"]=t.value;saveUI();render();return}
