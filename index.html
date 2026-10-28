@@ -685,7 +685,7 @@ const FC_BRANDS=["Open ID","State Games","Scout Day","Invite Only","Rising Stars
 const FC_MON=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
 const FC_MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const fcMonIdx=r=>{const t=String(r.month||"").toLowerCase().replace(/[^a-z]/g," ").trim().split(/\s+/)[0]||"";const i=FC_MON.indexOf(t.slice(0,3));if(i>=0)return i;return r.date?Number(r.date.slice(5,7))-1:99};
-const fcRows=()=>(S.fc27||[]).slice().sort((a,b)=>fcMonIdx(a)-fcMonIdx(b)||String(a.date||"9999").localeCompare(String(b.date||"9999"))||String(a.name).localeCompare(String(b.name)));
+const fcRows=()=>(S.fc27||[]).filter(r=>!r.removed).sort((a,b)=>fcMonIdx(a)-fcMonIdx(b)||String(a.date||"9999").localeCompare(String(b.date||"9999"))||String(a.name).localeCompare(String(b.name)));
 const fcLY=r=>r.lyEvent?S.events.find(e=>e.name===r.lyEvent&&finState(e.state)===finState(r.state)):null;
 const fcAct=r=>{const e=r.eventId?byId("events",r.eventId):null;if(!e)return null;const c=calc(e);return{e,regs:c.regs,gross:c.gross,net:c.revenue}};
 const fcTotal=r=>has(r.total)?n(r.total):n(r.players)*n(r.avg);
