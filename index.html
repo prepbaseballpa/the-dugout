@@ -1016,6 +1016,72 @@ async function rkPublish(d){
     UI.rkVer="";saveUI();render();alert(`Published. Class of ${d.cls} rankings now match "${d.name}".`);
   }catch(e){alert("Publishing didn't finish: "+((e&&e.message)||e)+". Nothing in the draft was lost; try again.")}
 }
+/* ---------- Rankings upload: one class + state rankings CSV sets that region's official list and gives every player a profile ---------- */
+const RKU={open:false,file:"",rows:null,cls:"",st:"",plan:null,msg:"",busy:false};
+const rkuGuess=f=>{f=String(f||"");const y=(f.match(/20[23]\d/g)||[]).pop()||"";const l=f.toLowerCase();
+  const st=/new york/.test(l)?"NY":/new jersey/.test(l)?"NJ":/connecticut/.test(l)?"CT":/rhode island/.test(l)?"RI":/new hampshire/.test(l)?"NH":/vermont/.test(l)?"VT":/maine/.test(l)?"ME":/massachusetts/.test(l)?"MA":/new england/.test(l)?"NE":/west virginia/.test(l)?"WV":/pennsylvania/.test(l)?"PA":"";return{cls:y,st}};
+const rkuNameKey=s=>String(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/,/g," ").replace(/\b(jr|sr|ii|iii|iv)\b\.?/g,"").replace(/[^a-z]/g,"");
+const rkuCase=s=>String(s||"").trim().replace(/\s+/g," ").split(" ").map(t=>{const core=t.replace(/[^A-Za-z]/g,"");if(/^(II|III|IV|V|JR|SR)$/i.test(core))return /^jr|sr$/i.test(core)?t.charAt(0).toUpperCase()+t.slice(1).toLowerCase():t.toUpperCase();
+  if(core.length>=3&&core===core.toUpperCase())return t.toLowerCase().replace(/(^|[-'])([a-z])/g,(m,a,b)=>a+b.toUpperCase());if(core.length&&core===core.toLowerCase())return t.replace(/(^|[-'])([a-z])/g,(m,a,b)=>a+b.toUpperCase());return t}).join(" ");
+const rkuDate=s=>{const m=String(s||"").trim().match(/^(\d{1,2})\/(?:(\d{1,2})\/)?(\d{2}|\d{4})$/);if(!m)return null;const y=m[3].length===2?"20"+m[3]:m[3];return{label:String(s).trim(),sort:y+String(m[1]).padStart(2,"0")+String(m[2]||"00").padStart(2,"0")}};
+function rkuParse(R){
+  R=R.filter(r=>r.some(c=>String(c||"").trim()));if(!R.length)return{err:"The file is empty."};
+  let hi=R.slice(0,6).findIndex(r=>r.some(c=>/^(name|player)$/i.test(String(c||"").trim())));
+  const col={};let dateCols=[],rankCol=-1,start=0;
+  if(hi>=0){const H=R[hi].map(c=>String(c||"").trim().toLowerCase());H.forEach((h,i)=>{if(/^(name|player)$/.test(h))col.name=i;else if(/^pos/.test(h))col.pos=i;else if(h==="state")col.state=i;else if(/^(school|hs|high school)$/.test(h))col.school=i;else if(/^commit/.test(h))col.commit=i;else if(/^notes?$/.test(h)&&col.notes==null)col.notes=i;else if(/^rank$/.test(h))rankCol=i});
+    for(let c=0;c<Math.max(...R.slice(0,hi+1).map(r=>r.length));c++){for(let r=0;r<=hi;r++){const d=rkuDate(R[r][c]);if(d){dateCols.push(Object.assign({c},d));break}}}
+    start=hi+1}
+  else{const r0=R[0];col.name=r0.findIndex(c=>/[A-Za-z]/.test(String(c||"")));const nums=r0.map((c,i)=>/^\d+$/.test(String(c||"").trim())?i:-1).filter(i=>i>=0&&i<col.name);if(nums.length)rankCol=nums[nums.length-1]}
+  if(col.name==null||col.name<0)return{err:"Couldn't find a Name column."};
+  dateCols.sort((a,b)=>a.sort.localeCompare(b.sort));const cur=dateCols.length?dateCols[dateCols.length-1]:null,curCol=cur?cur.c:rankCol;
+  const out=[],seen=new Set();let i=0;
+  R.slice(start).forEach(r=>{const nm=rkuCase(r[col.name]);if(!nm||!/[a-z]/i.test(nm))return;const k=rkuNameKey(nm);if(seen.has(k))return;seen.add(k);i++;
+    const rv=curCol>=0?parseInt(String(r[curCol]||"").trim(),10):NaN;const rank=isFinite(rv)?rv:i;
+    const hist=dateCols.slice(0,-1).map(d=>({label:d.label,v:String(r[d.c]||"").trim()})).filter(h=>h.v);
+    const g=k=>col[k]!=null?String(r[col[k]]||"").trim():"";
+    out.push({name:nm,key:k,rank,hist,pos:g("pos"),state:g("state").toUpperCase(),school:g("school"),commit:g("commit"),notes:g("notes")})});
+  return{list:out,cur:cur?cur.label:""}}
+function rkuPlan(){
+  const P=rkuParse(RKU.rows||[]);if(P.err)return P;const cls=RKU.cls,home=RKU.st;if(!/^20\d\d$/.test(cls))return{err:"Pick the class."};if(!home)return{err:"Pick the state."};
+  const reg=regionOf(home==="NE"?"MA":home);const all=RAWP.filter(p=>String(p.gradYear)===cls);
+  const used=new Set(),updated=[],added=[];
+  P.list.forEach(r=>{const st=r.state&&regionOf(r.state)===reg?r.state:(home==="NE"?"":home);
+    const c=all.filter(p=>!used.has(p.id)&&rkuNameKey(p.name)===r.key&&(!p.state||regionOf(p.state)===reg||!RANK_STATES.includes(String(p.state).toUpperCase()))).sort((a,b)=>(regionOf(b.state)===reg)-(regionOf(a.state)===reg));
+    const m=c[0];if(m){used.add(m.id);updated.push({p:m,r,st})}else added.push({r,st})});
+  const dropped=all.filter(p=>!used.has(p.id)&&regionOf(p.state)===reg&&has(p.rank)&&p.rank!=="");
+  const noState=added.filter(a=>!a.st).length+updated.filter(u=>!u.st&&regionOf(u.p.state)!==reg).length;
+  if(noState)return{err:`${noState} players on this New England sheet have no state (CT, RI, NH, VT, ME or MA). Add a State column to the sheet, or pick one state above if they're all from the same state.`};
+  return{cls,home,reg,cur:P.cur,updated,added,dropped,noState,n:P.list.length}}
+async function rkuSave(){
+  const P=RKU.plan;if(!P||P.err||!db)return;RKU.busy=true;render();const now=new Date().toISOString(),src=`${P.home} ${P.cls} rankings CSV (${RKU.file})`,ops=[];
+  const histStr=r=>r.hist.map(h=>`${h.label}: ${h.v}`).join(" · ");const prevOf=(r,p)=>{if(r.hist.length){const v=parseInt(r.hist[r.hist.length-1].v,10);return isFinite(v)?v:null}return p&&regionOf(p.state)===P.reg&&has(p.rank)&&p.rank!==""?n(p.rank):null};
+  P.updated.forEach(({p,r,st})=>{const d={rank:r.rank,prevRank:prevOf(r,p),rankedAt:now,rankSource:src,updatedAt:now};if(regionOf(p.state)!==P.reg&&st)d.state=st;else if(!p.state&&st)d.state=st;
+    if(r.hist.length)d.rankHistory=histStr(r);else if(has(p.rank)&&p.rank!==""&&regionOf(p.state)===P.reg&&n(p.rank)!==r.rank)d.rankHistory=[p.rankHistory,`${(p.rankedAt||"").slice(0,7)||"before"}: ${p.rank}`].filter(Boolean).join(" · ");
+    if(r.pos&&!p.position)d.position=r.pos;if(r.school&&!p.school)d.school=r.school;if(r.commit&&!p.commitment)d.commitment=r.commit;if(r.notes)d.notes=p.notes&&!String(p.notes).includes(r.notes)?r.notes+" | Previous: "+p.notes:r.notes;
+    ops.push(["update",p.id,d])});
+  const taken=new Set(RAWP.map(p=>p.id));
+  P.added.forEach(({r,st})=>{const s=(st||P.home).toLowerCase();let id=`${s}${P.cls.slice(2)}-${cSlug(r.name)}`;while(taken.has(id))id+="-2";taken.add(id);
+    ops.push(["set",id,{name:r.name,gradYear:P.cls,state:st||"",rank:r.rank,prevRank:r.hist.length?prevOf(r,null):null,position:r.pos,school:r.school,commitment:r.commit,notes:r.notes,rankHistory:histStr(r),source:src,rankedAt:now,createdAt:now}])});
+  P.dropped.forEach(p=>ops.push(["update",p.id,{rank:null,prevRank:n(p.rank),rankHistory:[p.rankHistory,`${(p.rankedAt||"").slice(0,7)||"before"}: ${p.rank}`].filter(Boolean).join(" · "),updatedAt:now}]));
+  try{for(let k=0;k<ops.length;k+=400){const chunk=ops.slice(k,k+400);if(db.batch){const b=db.batch();chunk.forEach(([op,id,d])=>op==="set"?b.set(db.collection("players").doc(id),d):b.update(db.collection("players").doc(id),d));await b.commit()}else{for(const [op,id,d] of chunk)op==="set"?await db.collection("players").doc(id).set(d):await db.collection("players").doc(id).update(d)}}
+    RKU.msg=`Saved. ${P.updated.length} existing profiles ranked, ${P.added.length} new profiles${P.dropped.length?`, ${P.dropped.length} no longer ranked`:""}.`;RKU.plan=null;RKU.rows=null;UI.rkClass=P.cls;UI.rkState=P.reg==="PAWV"?"":P.reg==="NE"?"NE":P.home;UI.rkVer="";saveUI()}
+  catch(x){RKU.msg="Couldn't save: "+(x.message||x)}RKU.busy=false;render()}
+function rkuPanel(){
+  if(!RKU.open)return"";const P=RKU.plan;let prev="";
+  if(P&&P.err)prev=`<p class="err-msg">${esc(P.err)}</p>`;
+  else if(P){const li=(l,f)=>l.length?`<ol class="fc-list" style="padding-left:22px">${l.map(x=>`<li>${f(x)}</li>`).join("")}</ol>`:"";
+    prev=`<div class="sec-gap"><p style="margin:0 0 8px"><b>Class of ${esc(P.cls)} · ${esc(REGION_LABEL[P.reg]||P.home)}</b>: ${P.n} ranked players${P.cur?` (ranks as of ${esc(P.cur)})`:""}</p>
+     <p style="margin:0 0 8px"><b>${P.updated.length}</b> already have a profile · <b>${P.added.length}</b> new profiles${P.dropped.length?` · <b>${P.dropped.length}</b> currently ranked but not on this list (they'll be unranked; profiles stay)`:""}</p>
+     ${P.noState?`<p class="err-msg" style="margin:0 0 8px">${P.noState} players have no state on the sheet. They'll be saved without one; set a state on the sheet or pick a single state above so they land on the right list.</p>`:""}
+     ${P.updated.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${P.updated.length} matched to existing profiles</b></summary>${li(P.updated.slice().sort((a,b)=>a.r.rank-b.r.rank),u=>`#${u.r.rank} ${esc(u.r.name)} → ${esc(u.p.name)}${u.p.school?` · ${esc(u.p.school)}`:""}${u.p.state?` · ${esc(u.p.state)}`:""}${has(u.p.rank)&&u.p.rank!==""?` · was #${esc(u.p.rank)}`:""}`)}</details>`:""}
+     ${P.added.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${P.added.length} new profiles</b></summary>${li(P.added.slice().sort((a,b)=>a.r.rank-b.r.rank),a=>`#${a.r.rank} ${esc(a.r.name)}`)}</details>`:""}
+     ${P.dropped.length?`<details class="panel" style="margin-bottom:10px" open><summary><b>${P.dropped.length} no longer ranked</b></summary>${li(P.dropped,p=>`${esc(p.name)} (was #${esc(p.rank)})`)}</details>`:""}
+     <button class="primary" type="button" data-rku="save"${RKU.busy?" disabled":""}>${RKU.busy?"Saving…":`Publish Class of ${esc(P.cls)} ${esc(REGION_LABEL[P.reg]||P.home)} rankings`}</button></div>`}
+  return `<div class="panel quick" style="display:block;margin-bottom:16px"><div class="head" style="margin-bottom:8px"><div><h3 style="margin:0">Upload rankings CSV</h3><p class="muted" style="margin:2px 0 0;font-size:.88rem">One class and state per file. The newest dated rank column is the official rank; older dated columns become rank history. If there's no rank column, the order of the list is the rank. Every player gets a profile; existing profiles are matched by name and class. Nothing saves until you click Publish.</p></div><button type="button" data-rku="close">Close</button></div>
+   <div class="toolbar"><label class="upbtn" for="rku-file">${RKU.file?"Change file":"Choose CSV file"}<input type="file" id="rku-file" accept=".csv,text/csv" hidden></label>${RKU.file?`<span class="muted" style="font-size:.85rem">${esc(RKU.file)}</span>`:""}
+   ${RKU.rows?`${selHTML("rku-cls",RKU.cls,[["","Class…"],"2026","2027","2028","2029","2030","2031"],"Class")}${selHTML("rku-st",RKU.st,[["","State…"],["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England (state column)"],["CT","CT"],["RI","RI"],["NH","NH"],["VT","VT"],["ME","Maine"],["MA","MA"]],"State")}<button type="button" data-rku="preview"${RKU.cls&&RKU.st?"":" disabled"}>Preview</button>`:""}</div>
+   ${RKU.msg?`<p class="${/^Saved/.test(RKU.msg)?"":"err-msg"}" style="margin:8px 0 0">${esc(RKU.msg)}</p>`:""}${prev}</div>`}
+
 function vRankings(){
   const canDraft=!isPT()&&db;
   if(UI.rkVer&&!rkActive())UI.rkVer="";
@@ -1039,8 +1105,8 @@ function vRankings(){
   const bar=d?`<div class="filt-on" role="status" style="background:var(--amber-soft)"><span><b>Draft: ${esc(d.name)}</b> · ${num(ord.length)} players · started by ${esc(d.createdBy||"")}${d.updatedAt?` · last edit ${esc(d.updatedBy||"")} ${esc(when(d.updatedAt))}`:""}${d.publishedAt?` · <b>published ${esc(when(d.publishedAt))}</b>`:""}. Full-time staff see and edit this draft together; the official rankings don't change until you publish.</span>
      <span style="display:flex;gap:6px;flex-wrap:wrap"><button class="small" type="button" data-rkact="rename">Rename</button><button class="small" type="button" data-rkact="copy">Duplicate</button><button class="small danger" type="button" data-rkact="delete">Delete</button><button class="small primary" type="button" data-rkact="publish"${canWrite?"":" disabled"}>Publish as official</button></span>${(()=>{const inD=new Set(ord.map(x=>x.p.id));const pool=S.players.filter(p=>rkHome(p)&&!inD.has(p.id)).sort((a,b)=>String(a.name).localeCompare(String(b.name)));return pool.length?`<label class="inline" for="rk-addp" style="flex-basis:100%">Add a player to this draft (goes to the bottom)<select id="rk-addp"><option value="">Choose a ${esc(UI.rkClass)} player…</option>${pool.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}${p.school?" · "+esc(p.school):""}</option>`).join("")}</select></label>`:""})()}</div>`
     :canDraft?`<p class="muted" style="margin:0 0 10px;font-size:.85rem">You're viewing the <b>published</b> rankings. To rework the order, pick or start a draft from <b>Version</b>${drafts.length?` (${drafts.length} draft${drafts.length>1?"s":""} for ${esc(UI.rkClass)})`:""}.</p>`:"";
-  return `<div class="head"><div><h2>Class of ${esc(UI.rkClass)} ${esc(REGION_LABEL[rkRegion()])} Rankings${UI.rkState&&UI.rkState!=="NE"&&rkRegion()!==UI.rkState?` <span class="chip" style="font-size:.7rem;vertical-align:middle">${esc(UI.rkState)} only</span>`:""}${UI.rkPos?` <span class="chip" style="font-size:.7rem;vertical-align:middle">${esc((POS_FILTERS.find(x=>x[0]===UI.rkPos)||["",""])[1])}</span>`:""}${d?' <span class="chip warn" style="font-size:.7rem;vertical-align:middle">Draft</span>':""}</h2><p>${d?"Arrows show movement versus the published rankings. Use ▲▼ to swap neighbors, # to jump a player to any rank, ✕ to drop him from this draft. Edits save to the draft right away.":"Arrows under each rank show movement since the previous published list. Click any player to open his profile, where you can add scouting notes, metrics and video."}</p></div>
-   <div class="toolbar">${selHTML("rk-class",UI.rkClass,["2027","2028","2029","2030"],"Class")}${verSel}${selHTML("rk-state",UI.rkState,[["","PA + WV"],["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England (all)"],["CT","CT"],["RI","RI"],["NH","NH"],["VT","VT"],["ME","Maine"],["MA","MA"]],"State")}${selHTML("rk-pos",UI.rkPos||"",POS_FILTERS,"Position")}${addBtn("players","Add player")}</div></div>
+  return rkuPanel()+`<div class="head"><div><h2>Class of ${esc(UI.rkClass)} ${esc(REGION_LABEL[rkRegion()])} Rankings${UI.rkState&&UI.rkState!=="NE"&&rkRegion()!==UI.rkState?` <span class="chip" style="font-size:.7rem;vertical-align:middle">${esc(UI.rkState)} only</span>`:""}${UI.rkPos?` <span class="chip" style="font-size:.7rem;vertical-align:middle">${esc((POS_FILTERS.find(x=>x[0]===UI.rkPos)||["",""])[1])}</span>`:""}${d?' <span class="chip warn" style="font-size:.7rem;vertical-align:middle">Draft</span>':""}</h2><p>${d?"Arrows show movement versus the published rankings. Use ▲▼ to swap neighbors, # to jump a player to any rank, ✕ to drop him from this draft. Edits save to the draft right away.":"Arrows under each rank show movement since the previous published list. Click any player to open his profile, where you can add scouting notes, metrics and video."}</p></div>
+   <div class="toolbar">${selHTML("rk-class",UI.rkClass,["2027","2028","2029","2030"],"Class")}${verSel}${selHTML("rk-state",UI.rkState,[["","PA + WV"],["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England (all)"],["CT","CT"],["RI","RI"],["NH","NH"],["VT","VT"],["ME","Maine"],["MA","MA"]],"State")}${selHTML("rk-pos",UI.rkPos||"",POS_FILTERS,"Position")}${!isPT()?`<button type="button" data-rku="open"${canWrite&&db?"":" disabled"}>⬆ Upload rankings CSV</button>`:""}${addBtn("players","Add player")}</div></div>
    ${bar}${d?"":draftBar()}
    <div class="tbl"><table><thead><tr><th>Rk</th>${editable?"<th>Move</th>":""}<th>Player</th><th>Pos</th><th class="num">FB</th><th class="num">EV</th><th class="num">60</th><th class="num">INF/OF</th><th>Commit</th><th class="num">Profile</th></tr></thead>
    <tbody>${rows||emptyRow(editable?10:9,waiting("players")?"Loading players…":"No players ranked in this class yet.","players","Add player")}</tbody></table></div>`;
@@ -1487,6 +1553,7 @@ window.addEventListener("hashchange",()=>setTab(location.hash.slice(1)));
 document.getElementById("tabs").addEventListener("click",e=>{const a=e.target.closest("a[data-tab]");if(a){e.preventDefault();try{history.replaceState(null,"","#"+a.dataset.tab)}catch(x){}setTab(a.dataset.tab,true);window.scrollTo(0,0)}});
 document.addEventListener("input",e=>{if(e.target.id==="tn-input")UI.tnDraft=e.target.value});
 document.addEventListener("click",async e=>{
+  {const rb=e.target.closest("[data-rku]");if(rb){const a=rb.dataset.rku;if(a==="open"){RKU.open=true;RKU.msg=""}else if(a==="close"){Object.assign(RKU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){RKU.plan=rkuPlan();RKU.msg=""}else if(a==="save"){await rkuSave();return}render();return}}
   {const df=e.target.closest("[data-dupfix]");if(df){await dupFix(df.dataset.dupfix);return}}
   {const kb=e.target.closest("[data-kpu]");if(kb){const a=kb.dataset.kpu;if(a==="open"){KPU.open=true;KPU.msg=""}else if(a==="close"){Object.assign(KPU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){KPU.plan=kpuPlan();KPU.msg=""}else if(a==="save"){await kpuSave();return}render();return}}
   {const fb=e.target.closest("[data-fcu]");if(fb){const a=fb.dataset.fcu;if(a==="open"){FCU.open=true;FCU.msg=""}else if(a==="close"){Object.assign(FCU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){FCU.plan=fcuPlan();FCU.msg=""}else if(a==="save"){await fcuSave();return}render();return}}
@@ -1588,6 +1655,8 @@ document.addEventListener("submit",async e=>{if(e.target.id!=="vid-link-form")re
 document.addEventListener("change",async e=>{
   const t=e.target,id=t.id;
   if(id==="fcu-file"&&t.files&&t.files[0]){const f=t.files[0];try{FCU.rows=parseCSV(await f.text());FCU.file=f.name;FCU.home=fcuGuess(f.name);FCU.plan=null;FCU.msg=""}catch(x){FCU.msg="Couldn't read that file."}render();return}
+  if(id==="rku-file"&&t.files&&t.files[0]){const f=t.files[0];try{RKU.rows=parseCSV(await f.text());RKU.file=f.name;const g=rkuGuess(f.name);RKU.cls=g.cls;RKU.st=g.st;RKU.plan=null;RKU.msg=""}catch(x){RKU.msg="Couldn't read that file."}render();return}
+  if(id==="rku-cls"||id==="rku-st"){RKU[id==="rku-cls"?"cls":"st"]=t.value;RKU.plan=null;render();return}
   if(id==="kpu-file"&&t.files&&t.files[0]){const f=t.files[0];try{KPU.rows=parseCSV(await f.text());KPU.file=f.name;KPU.home=kpuGuess(f.name,KPU.rows);KPU.plan=null;KPU.msg=""}catch(x){KPU.msg="Couldn't read that file."}render();return}
   if(id==="kpu-home"){KPU.home=t.value;KPU.plan=null;render();return}
   if(id==="fcu-home"){FCU.home=t.value;FCU.plan=null;render();return}
