@@ -358,12 +358,12 @@ const isHome=p=>!p.state||HOME_STATES.includes(p.state);
 const NE_STATES=["CT","RI","NH","VT","ME","MA"];
 const RANK_STATES=["PA","WV","NY","NJ"].concat(NE_STATES);
 /* Financial filters (Overview, 2027 Forecast): whole Northeast, a region, or one state. */
-const REG_OPTS=[["","All Northeast"],["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England"]];
-const REG_OK=v=>REG_OPTS.some(x=>x[0]===v)?v:"";
+const REG_OPTS=[["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England"]];
+const REG_OK=v=>REG_OPTS.some(x=>x[0]===v)?v:"PA";
+/* Each financial record belongs to exactly one state. Anything without a recognised single state (blank, "Nat.", "Reg") came from the PA sheet, so it counts as PA. */
+const finState=st=>{st=String(st||"").trim().toUpperCase();return ["PA","WV","NY","NJ"].includes(st)?st:NE_STATES.includes(st)?"NE":"PA"};
 const REG_NAME=v=>(REG_OPTS.find(x=>x[0]===v)||["",v])[1];
-function regMatch(st,f){if(!f)return true;st=String(st||"PA").trim();const parts=st.split(/\s*\/\s*/).map(x=>x.toUpperCase());
-  if(f==="NATREG")return parts.some(x=>/^(NAT\.?|NATIONAL|REG\.?|REGIONAL)$/.test(x));
-  if(f==="PAWV")return parts.some(x=>x==="PA"||x==="WV");if(f==="NE")return parts.some(x=>NE_STATES.includes(x));return parts.includes(f)}
+function regMatch(st,f){return finState(st)===(REG_OK(f||"PA"))}
 const regionOf=st=>{st=st||"PA";return st==="PA"||st==="WV"?"PAWV":st==="NY"?"NY":st==="NJ"?"NJ":NE_STATES.includes(st)?"NE":null};
 const REGION_LABEL={PAWV:"PA + WV",NY:"New York",NJ:"New Jersey",NE:"New England"};
 const rkRegion=()=>{const v=UI.rkState||"";return v===""||v==="PA"||v==="WV"?"PAWV":v==="NE"?"NE":regionOf(v)||"PAWV"};
@@ -618,7 +618,7 @@ function totals(list){const T={events:list.length,regs:0,gross:0,disc:0,cred:0,r
   list.forEach(e=>{const c=calc(e);if(e.type==="Scout Day")T.scout++;else T.paid++;if(c.actual){T.regs+=c.regs;T.gross+=c.gross;T.disc+=c.disc;T.cred+=c.cred;T.rev+=c.revenue;T.exp+=c.expenses}});return T}
 function vOverview(){
   const ov=REG_OK(UI.ovRegion||""), ev=seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)), T=totals(ev), KA=S.kpi||{}, ss=String(UI.season), stK=st=>st==="PA"?KA[ss]:KA[ss+"-"+st.toLowerCase()];
-  const K=(()=>{if(ov==="PA"||ov==="PAWV")return KA[ss]||{};if(ov&&ov.length===2)return stK(ov)||{};if(!ov){const parts=Object.keys(KA).filter(k=>k===ss||k.indexOf(ss+"-")===0).map(k=>KA[k]).filter(x=>has(x.uniqueCustomers));return parts.length?{uniqueCustomers:parts.reduce((a,x)=>a+Number(x.uniqueCustomers),0),multi:parts.length>1}:{}}return{}})();
+  const K=stK(ov)||{};
   const kpi=(lab,val,sub)=>`<div class="kpi"><div class="lab">${lab}</div><div class="val">${val}</div><div class="sub">${sub||"&nbsp;"}</div></div>`;
   const td=todayISO();
   const byType=EVTYPES.map(t=>{const l=ev.filter(e=>(e.type||"Other")===t);const x=totals(l);return {t,x}}).filter(r=>r.x.events);
@@ -637,7 +637,7 @@ function vOverview(){
    ${kpi("Credits",money(-T.cred),"")}
    ${kpi("Total net revenue",money(T.rev),T.exp?`${money(T.rev-T.exp)} after ${money(T.exp)} expenses`:"No expenses entered yet")}
    ${kpi("Avg. revenue / registration",T.regs?money(T.rev/T.regs):"—","Scout days included")}
-   ${kpi("Unique customers",has(K.uniqueCustomers)?num(K.uniqueCustomers):"—",has(K.uniqueCustomers)?(K.multi?"Sum of state KPI reports (some families may overlap)":`From ${ov&&ov.length===2?ov:"PA"} season KPI report`):ov?"Not reported for this region":"Not reported")}
+   ${kpi("Unique customers",has(K.uniqueCustomers)?num(K.uniqueCustomers):"—",has(K.uniqueCustomers)?`From ${REG_NAME(ov)} season KPI report`:"Not reported for this state")}
   </div>
   <div class="grid2">
    <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
@@ -654,7 +654,8 @@ function vOverview(){
 }
 
 function vEvents(){
-  let list=S.events.filter(e=>UI.evSeason==="all"||String(e.season)===UI.evSeason);
+  const evSt=REG_OK(UI.evState||"PA");
+  let list=S.events.filter(e=>(UI.evSeason==="all"||String(e.season)===UI.evSeason)&&regMatch(e.state,evSt));
   if(UI.evType)list=list.filter(e=>(e.type||"Other")===UI.evType);
   list.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
   const mKey=e=>(e.date||"").slice(0,7), mLabel=k=>k?new Date(k+"-15T12:00:00").toLocaleDateString("en-US",{month:"long",year:"numeric"}):"No date";
@@ -673,7 +674,7 @@ function vEvents(){
     <td class="num">${c.expenses?money(c.expenses):"—"}</td><td class="num">${c.expenses?money(c.net):"—"}</td>
     <td style="min-width:140px">${(()=>{const st=eventStaff(e.id).sort(staffOrder);const c=availCounts(e.id);return (st.length?`<span class="sub" style="color:var(--ink)">${st.map(x=>esc(x.name)).join(", ")}</span>`:'<span class="muted">None assigned</span>')+(c.yes||c.maybe?`<span class="sub">${c.yes} available${c.maybe?" · "+c.maybe+" maybe":""}</span>`:"")})()}</td></tr>`}).join("");
   return `<div class="head"><div><h2>Events</h2><p>Registrations and revenue as reported for each event. Net revenue is the reported figure, not recalculated. Add expenses to an event to see its profit. Click an event to edit it or assign staff.</p></div>
-   <div class="toolbar">${selHTML("ev-season",UI.evSeason,[["all","All seasons"]].concat(seasons()),"Season")}${selHTML("ev-month",selM,[["","All months"]].concat(months.map(k=>[k,mLabel(k)])),"Month")}${selHTML("ev-type",UI.evType||"",[["","All types"]].concat(EVTYPES),"Type")}${addBtn("events","Add event")}</div></div>
+   <div class="toolbar">${selHTML("ev-season",UI.evSeason,[["all","All seasons"]].concat(seasons()),"Season")}${selHTML("ev-state",evSt,REG_OPTS,"State")}${selHTML("ev-month",selM,[["","All months"]].concat(months.map(k=>[k,mLabel(k)])),"Month")}${selHTML("ev-type",UI.evType||"",[["","All types"]].concat(EVTYPES),"Type")}${addBtn("events","Add event")}</div></div>
    <div class="tbl"><table><thead><tr><th>Event</th><th>Date</th><th>Type</th><th>Status</th><th class="num">Reg.</th><th class="num">Gross</th><th class="num">Discounts</th><th class="num">Credits</th><th class="num">Net revenue</th><th class="num">Per reg.</th><th class="num">Expenses</th><th class="num">Profit</th><th>Staff</th></tr></thead>
    <tbody>${rows||emptyRow(13,waiting("events")?"Loading events…":"No events match these filters.","events","Add event")}</tbody>
    ${list.length?`<tfoot><tr><td colspan="4">${selM?esc(mLabel(selM))+" totals":"Totals"} · ${T.events} events (excl. canceled)</td><td class="num">${num(T.regs)}</td><td class="num">${money(T.gross)}</td><td class="num">${money(-T.disc)}</td><td class="num">${money(-T.cred)}</td><td class="num">${money(T.rev)}</td><td class="num">${T.regs?money(T.rev/T.regs):"—"}</td><td class="num">${T.exp?money(T.exp):"—"}</td><td class="num">${T.exp?money(T.rev-T.exp):"—"}</td><td></td></tr></tfoot>`:""}</table></div>`;
@@ -685,7 +686,7 @@ const FC_MON=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov",
 const FC_MONL=["January","February","March","April","May","June","July","August","September","October","November","December"];
 const fcMonIdx=r=>{const t=String(r.month||"").toLowerCase().replace(/[^a-z]/g," ").trim().split(/\s+/)[0]||"";const i=FC_MON.indexOf(t.slice(0,3));if(i>=0)return i;return r.date?Number(r.date.slice(5,7))-1:99};
 const fcRows=()=>(S.fc27||[]).slice().sort((a,b)=>fcMonIdx(a)-fcMonIdx(b)||String(a.date||"9999").localeCompare(String(b.date||"9999"))||String(a.name).localeCompare(String(b.name)));
-const fcLY=r=>r.lyEvent?S.events.find(e=>e.name===r.lyEvent):null;
+const fcLY=r=>r.lyEvent?S.events.find(e=>e.name===r.lyEvent&&finState(e.state)===finState(r.state)):null;
 const fcAct=r=>{const e=r.eventId?byId("events",r.eventId):null;if(!e)return null;const c=calc(e);return{e,regs:c.regs,gross:c.gross,net:c.revenue}};
 const fcTotal=r=>has(r.total)?n(r.total):n(r.players)*n(r.avg);
 const fcOverdue=r=>!r.booked&&r.due&&r.due<todayISO();
@@ -697,20 +698,22 @@ function vForecast(){
   const all=fcRows(), meta=S.fc27meta||{};
   if(!all.length)return `<div class="head"><div><h2>2027 Forecast</h2><p>${waiting("events")?"Loading the forecast…":"No forecast loaded yet. Send Claude the PA Dashboard forecast CSV to load it."}</p></div></div>`;
   const F={b:UI.fcBrand||"",m:UI.fcMonth||"",s:REG_OK(UI.fcState||""),st:UI.fcStatus||""};
-  let list=all;
+  const rAll=all.filter(r=>regMatch(r.state,F.s));
+  let list=rAll;
   if(F.b)list=list.filter(r=>r.brand===F.b);
   if(F.m!=="")list=list.filter(r=>String(fcMonIdx(r))===F.m);
-  if(F.s)list=list.filter(r=>regMatch(r.state,F.s));
   if(F.st==="booked")list=list.filter(r=>r.booked);else if(F.st==="open")list=list.filter(r=>!r.booked);else if(F.st==="overdue")list=list.filter(fcOverdue);else if(F.st==="new")list=list.filter(r=>!r.lyEvent);
-  const T=fcSum(list), filtered=!!(F.b||F.m!==""||F.s||F.st);
+  const kd=(meta.keyDates||[]).filter(k=>{const m=String(k.name||"").match(/\((PA|WV|NY|NJ|NE)\)$/);return (m?m[1]:"PA")===F.s});
+  const lm=meta["landmines"+F.s]||[];
+  const T=fcSum(list), filtered=!!(F.b||F.m!==""||F.st);
   const s26=totals(seasonEvents("2026").filter(e=>regMatch(e.state,F.s)));
-  const months=[...new Set(all.map(fcMonIdx))].filter(i=>i<12).sort((a,b)=>a-b);
+  const months=[...new Set(rAll.map(fcMonIdx))].filter(i=>i<12).sort((a,b)=>a-b);
   const states=[...new Set(all.map(r=>r.state).filter(Boolean))];
   const kpi=(lab,val,sub)=>`<div class="kpi"><div class="lab">${lab}</div><div class="val">${val}</div><div class="sub">${sub||"&nbsp;"}</div></div>`;
   const vsLine=(cur,ly,seasonV,fmt)=>filtered?(T.lyn?`Same events in 2026: ${fmt(ly)} · ${pctChip(cur,ly)}`:"No 2026 match for these events"):`2026 season: ${fmt(seasonV)} · ${pctChip(cur,seasonV)}`;
   const brandRows=FC_BRANDS.concat([...new Set(all.map(r=>r.brand))].filter(b=>!FC_BRANDS.includes(b))).map(b=>{const L=list.filter(r=>r.brand===b);return{b,x:fcSum(L)}}).filter(r=>r.x.n);
   const monRows=months.map(i=>{const L=list.filter(r=>fcMonIdx(r)===i);return{i,x:fcSum(L)}}).filter(r=>r.x.n);
-  const due=all.filter(r=>!r.booked&&r.due).sort((a,b)=>a.due.localeCompare(b.due)).slice(0,8);
+  const due=rAll.filter(r=>!r.booked&&r.due).sort((a,b)=>a.due.localeCompare(b.due)).slice(0,8);
   const td=todayISO();
   /* event table, grouped by month */
   let body="",lastM=null;
@@ -737,7 +740,7 @@ function vForecast(){
   });
   const fl=[F.b&&F.b,F.m!==""&&FC_MONL[+F.m],F.s&&REG_NAME(F.s),F.st&&({booked:"Booked",open:"Not booked",overdue:"Overdue to book",new:"New for 2027"})[F.st]].filter(Boolean);
   return `<div class="head"><div><h2>2027 Forecast</h2><p>Forecasted participants and registration dollars for every 2027 event, compared with the same event in 2026. Click an event to see the details. Actuals fill in as 2027 events are linked.</p></div>
-    <div class="toolbar">${selHTML("fc-brand",F.b,[["","All brands"]].concat(FC_BRANDS.filter(b=>all.some(r=>r.brand===b))),"Event brand")}${selHTML("fc-month",F.m,[["","All months"]].concat(months.map(i=>[String(i),FC_MONL[i]])),"Month")}${selHTML("fc-state",F.s,REG_OPTS,"Region / state")}${selHTML("fc-status",F.st,[["","All events"],["booked","Booked"],["open","Not booked"],["overdue","Overdue to book"],["new","New for 2027"]],"Status")}<button class="primary" data-add="fc27"${canWrite&&db?"":" disabled"}>+ Add event</button></div></div>
+    <div class="toolbar">${selHTML("fc-brand",F.b,[["","All brands"]].concat(FC_BRANDS.filter(b=>rAll.some(r=>r.brand===b))),"Event brand")}${selHTML("fc-month",F.m,[["","All months"]].concat(months.map(i=>[String(i),FC_MONL[i]])),"Month")}${selHTML("fc-state",F.s,REG_OPTS,"Region / state")}${selHTML("fc-status",F.st,[["","All events"],["booked","Booked"],["open","Not booked"],["overdue","Overdue to book"],["new","New for 2027"]],"Status")}<button class="primary" data-add="fc27"${canWrite&&db?"":" disabled"}>+ Add event</button></div></div>
    ${fl.length?`<div class="filt-on"><span>Showing: ${esc(fl.join(" · "))} (${T.n} of ${all.length} events)</span><button type="button" class="small" data-fcclear="1">Clear filters</button></div>`:""}
    <div class="kpis">
     ${kpi("Forecast events",num(T.n),`${T.booked} booked on website · ${T.n-T.lyn} new for 2027`)}
@@ -747,7 +750,7 @@ function vForecast(){
     ${kpi("Actual participants",num(T.ap),T.linked?`${T.p?Math.round(T.ap/T.p*100):0}% of forecast · ${T.linked} events linked`:"No 2027 events linked yet")}
     ${kpi("Actual registration $",money(T.at),T.linked&&T.t?`${Math.round(T.at/T.t*100)}% of forecast`:"Fills in as events are linked")}
     ${kpi("Booked on website",`${T.booked} / ${T.n}`,`${list.filter(fcOverdue).length} past their booking due date`)}
-    ${kpi("Next booking due",(()=>{const x=all.filter(r=>!r.booked&&r.due&&r.due>=td).sort((a,b)=>a.due.localeCompare(b.due))[0];return x?fmtDate(x.due):"—"})(),(()=>{const x=all.filter(r=>!r.booked&&r.due&&r.due>=td).sort((a,b)=>a.due.localeCompare(b.due))[0];return x?esc(x.name):"Nothing upcoming"})())}
+    ${kpi("Next booking due",(()=>{const x=rAll.filter(r=>!r.booked&&r.due&&r.due>=td).sort((a,b)=>a.due.localeCompare(b.due))[0];return x?fmtDate(x.due):"—"})(),(()=>{const x=rAll.filter(r=>!r.booked&&r.due&&r.due>=td).sort((a,b)=>a.due.localeCompare(b.due))[0];return x?esc(x.name):"Nothing upcoming"})())}
    </div>
    <div class="grid2">
     <div class="panel"><h3>By event brand</h3><div class="tbl"><table><thead><tr><th>Brand</th><th class="num">Events</th><th class="num">Players</th><th class="num">Forecast $</th><th class="num">Avg</th><th class="num">Share</th><th class="num">vs 2026</th></tr></thead>
@@ -763,8 +766,9 @@ function vForecast(){
    <div class="grid2" style="margin-top:20px">
     <div class="panel"><h3>Booking due dates</h3>${due.length?`<div class="tbl"><table><tbody>${due.map(r=>`<tr class="click" data-fcopen="${esc(r.id)}"><td class="name">${esc(r.name)}<span class="sub">${esc(r.brand||"")} · event ${esc(r.dateText||"TBD")}</span></td><td class="num">${fmtDate(r.due)}${fcOverdue(r)?'<span class="sub var-neg">Overdue</span>':""}</td></tr>`).join("")}</tbody></table></div>`:'<div class="empty">Every event with a due date is booked.</div>'}</div>
     <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
-     ${(meta.keyDates||[]).length?`<div class="panel"><h3>Key school dates</h3><div class="tbl"><table><thead><tr><th>Date</th><th class="num">When</th><th class="num">Due</th></tr></thead><tbody>${meta.keyDates.map(k=>`<tr><td>${esc(k.name)}</td><td class="num">${fmtDate(k.date)}</td><td class="num">${k.due?fmtDate(k.due):"—"}</td></tr>`).join("")}</tbody></table></div></div>`:""}
-     ${(meta.notCarried||[]).length?`<div class="panel"><h3>2026 events not on the 2027 forecast</h3><ul class="fc-list">${meta.notCarried.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:""}
+     ${kd.length?`<div class="panel"><h3>${esc(REG_NAME(F.s))} key school dates</h3><div class="tbl"><table><thead><tr><th>Date</th><th class="num">When</th><th class="num">Due</th></tr></thead><tbody>${kd.map(k=>`<tr><td>${esc(String(k.name).replace(/\s*\((PA|WV|NY|NJ|NE)\)$/,""))}</td><td class="num">${fmtDate(k.date)}</td><td class="num">${k.due?fmtDate(k.due):"—"}</td></tr>`).join("")}</tbody></table></div></div>`:""}
+     ${lm.length?`<div class="panel"><h3>${esc(REG_NAME(F.s))} landmines</h3><ul class="fc-list">${lm.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:""}
+     ${F.s==="PA"&&(meta.notCarried||[]).length?`<div class="panel"><h3>2026 events not on the 2027 forecast</h3><ul class="fc-list">${meta.notCarried.map(x=>`<li>${esc(x)}</li>`).join("")}</ul></div>`:""}
     </div>
    </div>`;
 }
@@ -1444,7 +1448,7 @@ document.addEventListener("submit",async e=>{if(e.target.id!=="vid-link-form")re
   try{await saveVideos(p,(Array.isArray(p.videos)?p.videos:[]).concat({link:url,name:name||"Video link",addedAt:new Date().toISOString()}));upState.msg="Link added.";upState.err=false}catch(x){upState.msg="Couldn't save that link. Try again.";upState.err=true}render()});
 document.addEventListener("change",async e=>{
   const t=e.target,id=t.id;
-  const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth"};
+  const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth","ev-state":"evState"};
   if(map[id]){UI[map[id]]=t.value;saveUI();render();return}
   if(id==="csv-file"&&t.files&&t.files[0]){const f=t.files[0];try{const txt=await f.text();CSVJ.rows=parseCSV(txt);CSVJ.file=f.name;CSVJ.plan=null;CSVJ.msg="";const ev=csvGuessEvent(f.name);if(ev){CSVJ.evId=ev.id;CSVJ.evName=ev.name;CSVJ.evDate=ev.date||""}else{CSVJ.evId="";CSVJ.evName="";CSVJ.evDate=""}}catch(err){CSVJ.msg="Couldn't read that file."}render();return}
   if(id==="csv-ev"){CSVJ.evId=t.value;CSVJ.plan=null;if(t.value&&t.value!=="__other"){const ev=byId("events",t.value);CSVJ.evName=ev?ev.name:"";CSVJ.evDate=ev?ev.date||"":""}else{CSVJ.evName="";CSVJ.evDate=""}render();return}
