@@ -1,4 +1,4 @@
-# The Dugout — Prep Baseball Pennsylvania
+# The Dugout — Prep Baseball Northeast
 
 Staff operations app: events, KPIs, 2027 forecast, staff, schedule, tasks, rankings, prospects and scouting notes.
 
@@ -36,3 +36,7 @@ Never commit data exports to this repo.
 4. Firebase console → Authentication → Settings → **Authorized domains** → add `prepbaseballpa.github.io`. Create your own login under Authentication → Users → Add user.
 5. GitHub repo → Settings → Pages → Deploy from branch → `main` / root.
 6. Open `https://prepbaseballpa.github.io/the-dugout/import.html`, sign in as an owner, and import `dugout-export.json`.
+
+## Logo
+
+The header shows `logo.png` from this repo (about 44px tall; a transparent PNG works best on the black header). Replace the file to change the logo.
