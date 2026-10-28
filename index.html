@@ -669,6 +669,25 @@ function kpuPanel(){
    ${KPU.rows?`${selHTML("kpu-home",KPU.home,[["","Which state's sheet?"]].concat(REG_OPTS),"Sheet")}<button type="button" data-kpu="preview"${KPU.home?"":" disabled"}>Preview</button>`:""}</div>
    ${KPU.msg?`<p class="${/^Saved/.test(KPU.msg)?"":"err-msg"}" style="margin:8px 0 0">${esc(KPU.msg)}</p>`:""}${prev}</div>`}
 
+/* ---------- Duplicate check: the same event saved twice (e.g. a sheet uploaded twice) ---------- */
+const dupGroups=(list,key)=>{const m={};list.forEach(x=>{const k=key(x);(m[k]=m[k]||[]).push(x)});return Object.values(m).filter(g=>g.length>1)};
+const fcDupKey=r=>[fcKey(r.name),r.date||"",r.dateText||"",n(r.players),n(r.total)].join("|");
+const evDupKey=e=>[kpuKey(e.name),e.date||"",n(e.actualPlayers),Math.round(n(e.grossRevenue)),Math.round(n(e.netRevenue))].join("|");
+const fcKeepScore=r=>(r.eventId?4:0)+(r.booked?2:0);
+const evKeepScore=e=>eventStaff(e.id).length*4+((S.availability||[]).some(a=>a.eventId===e.id)?2:0)+(/-2$/.test(e.id)?0:1);
+/* Rows from one upload that share a name are separate events (keep them all); copies from a second upload of the same sheet are the duplicates. */
+const upStamp=id=>(String(id).match(/-u([a-z0-9]+)-\d+$/)||[])[1]||"import";
+const pickExtras=(g,score,byUpload)=>{const c={};g.forEach(x=>{const k=byUpload?upStamp(x.id):x.id;c[k]=(c[k]||0)+1});const keep=Math.max(...Object.values(c));return g.slice().sort((a,b)=>score(b)-score(a)||String(a.id).length-String(b.id).length||String(a.id).localeCompare(String(b.id))).slice(keep)};
+const dupSets=(list,key,score)=>dupGroups(list,key).map(g=>({g,x:pickExtras(g,score,key===fcDupKey)})).filter(o=>o.x.length);
+function dupBanner(kind,sets,label){if(!sets.length||!canWrite||!db)return"";const extra=sets.reduce((a,o)=>a+o.x.length,0),groups=sets.map(o=>o.g);
+  return `<div class="panel" style="border-color:var(--red);margin-bottom:16px"><h3 style="margin:0 0 4px">${extra} duplicate ${kind==="fc"?"forecast rows":"events"} in ${esc(label)}</h3><p class="muted" style="margin:0 0 8px;font-size:.88rem">These are saved more than once with identical numbers, so they're counted twice: ${esc(groups.slice(0,6).map(g=>g[0].name+(g.length>2?` (×${g.length})`:"")).join(", "))}${groups.length>6?`, and ${groups.length-6} more`:""}. Removing keeps one copy of each${kind==="fc"?" (the booked or linked one if there is one)":" (the one with staff assigned if there is one)"}.</p><button class="primary" type="button" data-dupfix="${kind}">Remove ${extra} duplicate${extra===1?"":"s"}</button></div>`}
+async function dupFix(kind){if(!db)return;let ops=[];
+  if(kind==="fc"){const F=REG_OK(UI.fcState||"PA");dupSets(fcRows().filter(r=>regMatch(r.state,F)),fcDupKey,fcKeepScore).forEach(o=>o.x.forEach(r=>ops.push(["settings",r.id,"hide"])))}
+  else{const ov=REG_OK(UI.ovRegion||"PA");dupSets(seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)),evDupKey,evKeepScore).forEach(o=>o.x.forEach(e=>{ops.push(["events",e.id,"del"]);ops.push(["schedule",e.id,"del"])}))}
+  if(!ops.length)return;if(!confirm(`Remove ${kind==="fc"?ops.length:ops.length/2} duplicate${ops.length>1?"s":""}? One copy of each stays.`))return;
+  try{const now=new Date().toISOString();for(let k=0;k<ops.length;k+=400){const chunk=ops.slice(k,k+400);if(db.batch){const b=db.batch();chunk.forEach(([c,id,op])=>op==="hide"?b.set(db.collection(c).doc(id),{removed:true,removedNote:"Duplicate",updatedAt:now},{merge:true}):b.delete(db.collection(c).doc(id)));await b.commit()}else{for(const [c,id,op] of chunk)op==="hide"?await db.collection(c).doc(id).set({removed:true,removedNote:"Duplicate",updatedAt:now},{merge:true}):await db.collection(c).doc(id).delete()}}}
+  catch(x){alert("Couldn't remove duplicates: "+(x.message||x))}render()}
+
 function vOverview(){
   const ov=REG_OK(UI.ovRegion||""), ev=seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)), T=totals(ev), KA=S.kpi||{}, ss=String(UI.season), stK=st=>st==="PA"?KA[ss]:KA[ss+"-"+st.toLowerCase()];
   const K=stK(ov)||{};
@@ -682,6 +701,7 @@ function vOverview(){
     return `<tr class="click" data-edit="events" data-id="${esc(e.id)}"><td class="name">${esc(e.name)}${sampleChip(e)}<span class="sub">${fmtDate(e.date)}</span></td><td class="num">${money(c.bNet)}</td><td class="num">${c.actual?money(c.net):"—"}</td><td class="num ${v==null?"":v>=0?"var-pos":"var-neg"}">${v==null?"—":(v>=0?"+":"")+money(v)}</td></tr>`}).join("");
   return kpuPanel()+`<div class="head"><div><h2>${esc(UI.season)} Season KPIs${ov?` <span class="chip acc" style="font-size:.75rem;vertical-align:middle">${esc(REG_NAME(ov))}</span>`:""}</h2><p>${ov?`${esc(REG_NAME(ov))} events only. `:""}Totals from every event with registration data this season, including upcoming events with registrations to date. Canceled events are excluded.</p></div>
     <div class="toolbar">${selHTML("ov-season",UI.season,seasons(),"Season")}${selHTML("ov-region",ov,REG_OPTS,"Region / state")}<button type="button" data-kpu="open"${canWrite&&db?"":" disabled"}>⬆ Upload actuals CSV</button></div></div>
+  ${dupBanner("ev",dupSets(ev,evDupKey,evKeepScore),REG_NAME(ov)+" "+UI.season)}
   <div class="kpis">
    ${kpi("Events",num(T.events),`${T.paid} paid · ${T.scout} scout days`)}
    ${kpi("Registrations",num(T.regs),`${T.events?num(T.regs/T.events):0} per event`)}
@@ -857,6 +877,7 @@ function vForecast(){
   return fcuPanel()+`<div class="head"><div><h2>2027 Forecast</h2><p>Forecasted participants and registration dollars for every 2027 event, compared with the same event in 2026. Click an event to see the details. Actuals fill in as 2027 events are linked.</p></div>
     <div class="toolbar">${selHTML("fc-brand",F.b,[["","All brands"]].concat(FC_BRANDS.filter(b=>rAll.some(r=>r.brand===b))),"Event brand")}${selHTML("fc-month",F.m,[["","All months"]].concat(months.map(i=>[String(i),FC_MONL[i]])),"Month")}${selHTML("fc-state",F.s,REG_OPTS,"Region / state")}${selHTML("fc-status",F.st,[["","All events"],["booked","Booked"],["open","Not booked"],["overdue","Overdue to book"],["new","New for 2027"]],"Status")}<button type="button" data-fcu="open"${canWrite&&db?"":" disabled"}>⬆ Upload forecast sheet</button><button class="primary" data-add="fc27"${canWrite&&db?"":" disabled"}>+ Add event</button></div></div>
    ${fl.length?`<div class="filt-on"><span>Showing: ${esc(fl.join(" · "))} (${T.n} of ${all.length} events)</span><button type="button" class="small" data-fcclear="1">Clear filters</button></div>`:""}
+   ${dupBanner("fc",dupSets(rAll,fcDupKey,fcKeepScore),REG_NAME(F.s)+" 2027 forecast")}
    <div class="kpis">
     ${kpi("Forecast events",num(T.n),`${T.booked} booked on website · ${T.n-T.lyn} new for 2027`)}
     ${kpi("Forecast participants",num(T.p),vsLine(T.p,T.lyp,s26.regs,num))}
@@ -1466,6 +1487,7 @@ window.addEventListener("hashchange",()=>setTab(location.hash.slice(1)));
 document.getElementById("tabs").addEventListener("click",e=>{const a=e.target.closest("a[data-tab]");if(a){e.preventDefault();try{history.replaceState(null,"","#"+a.dataset.tab)}catch(x){}setTab(a.dataset.tab,true);window.scrollTo(0,0)}});
 document.addEventListener("input",e=>{if(e.target.id==="tn-input")UI.tnDraft=e.target.value});
 document.addEventListener("click",async e=>{
+  {const df=e.target.closest("[data-dupfix]");if(df){await dupFix(df.dataset.dupfix);return}}
   {const kb=e.target.closest("[data-kpu]");if(kb){const a=kb.dataset.kpu;if(a==="open"){KPU.open=true;KPU.msg=""}else if(a==="close"){Object.assign(KPU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){KPU.plan=kpuPlan();KPU.msg=""}else if(a==="save"){await kpuSave();return}render();return}}
   {const fb=e.target.closest("[data-fcu]");if(fb){const a=fb.dataset.fcu;if(a==="open"){FCU.open=true;FCU.msg=""}else if(a==="close"){Object.assign(FCU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){FCU.plan=fcuPlan();FCU.msg=""}else if(a==="save"){await fcuSave();return}render();return}}
   {const ed=e.target.closest("[data-tnedit]");if(ed&&UI.profile){UI.toolEdit=UI.profile+":"+ed.dataset.tnedit;UI.tnDraft=null;render();setTimeout(()=>{const t=document.getElementById("tn-input");if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length)}},60);return}
