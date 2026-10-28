@@ -616,7 +616,8 @@ function seasonEvents(season){return S.events.filter(e=>String(e.season)===Strin
 function totals(list){const T={events:list.length,regs:0,gross:0,disc:0,cred:0,rev:0,exp:0,paid:0,scout:0};
   list.forEach(e=>{const c=calc(e);if(e.type==="Scout Day")T.scout++;else T.paid++;if(c.actual){T.regs+=c.regs;T.gross+=c.gross;T.disc+=c.disc;T.cred+=c.cred;T.rev+=c.revenue;T.exp+=c.expenses}});return T}
 function vOverview(){
-  const ov=UI.ovRegion||"", ev=seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)), T=totals(ev), K=["","PAWV","PA"].includes(ov)?((S.kpi||{})[String(UI.season)]||{}):{};
+  const ov=UI.ovRegion||"", ev=seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)), T=totals(ev), KA=S.kpi||{}, ss=String(UI.season), stK=st=>st==="PA"?KA[ss]:KA[ss+"-"+st.toLowerCase()];
+  const K=(()=>{if(ov==="PA"||ov==="PAWV")return KA[ss]||{};if(ov&&ov.length===2)return stK(ov)||{};if(!ov){const parts=Object.keys(KA).filter(k=>k===ss||k.indexOf(ss+"-")===0).map(k=>KA[k]).filter(x=>has(x.uniqueCustomers));return parts.length?{uniqueCustomers:parts.reduce((a,x)=>a+Number(x.uniqueCustomers),0),multi:parts.length>1}:{}}return{}})();
   const kpi=(lab,val,sub)=>`<div class="kpi"><div class="lab">${lab}</div><div class="val">${val}</div><div class="sub">${sub||"&nbsp;"}</div></div>`;
   const td=todayISO();
   const byType=EVTYPES.map(t=>{const l=ev.filter(e=>(e.type||"Other")===t);const x=totals(l);return {t,x}}).filter(r=>r.x.events);
@@ -635,7 +636,7 @@ function vOverview(){
    ${kpi("Credits",money(-T.cred),"")}
    ${kpi("Total net revenue",money(T.rev),T.exp?`${money(T.rev-T.exp)} after ${money(T.exp)} expenses`:"No expenses entered yet")}
    ${kpi("Avg. revenue / registration",T.regs?money(T.rev/T.regs):"—","Scout days included")}
-   ${kpi("Unique customers",has(K.uniqueCustomers)?num(K.uniqueCustomers):"—",has(K.uniqueCustomers)?"From PA season KPI report":ov&&!["PAWV","PA"].includes(ov)?"Not reported for this region":"Not reported")}
+   ${kpi("Unique customers",has(K.uniqueCustomers)?num(K.uniqueCustomers):"—",has(K.uniqueCustomers)?(K.multi?"Sum of state KPI reports (some families may overlap)":`From ${ov&&ov.length===2?ov:"PA"} season KPI report`):ov?"Not reported for this region":"Not reported")}
   </div>
   <div class="grid2">
    <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
