@@ -616,6 +616,59 @@ const waiting=col=>db&&!loaded[col];
 function seasonEvents(season){return S.events.filter(e=>String(e.season)===String(season)&&e.status!=="Canceled")}
 function totals(list){const T={events:list.length,regs:0,gross:0,disc:0,cred:0,rev:0,exp:0,paid:0,scout:0};
   list.forEach(e=>{const c=calc(e);if(e.type==="Scout Day")T.scout++;else T.paid++;if(c.actual){T.regs+=c.regs;T.gross+=c.gross;T.disc+=c.disc;T.cred+=c.cred;T.rev+=c.revenue;T.exp+=c.expenses}});return T}
+/* ---------- Actuals upload: a state dashboard's "Annual KPIs" CSV updates that state's events and KPI summary ---------- */
+const KPU={open:false,file:"",rows:null,home:"",plan:null,msg:"",busy:false};
+const kpuGuess=(f,R)=>{const a=String(f||"").toLowerCase()+" "+String(((R||[])[3]||[])[0]||"").toLowerCase();return /new york/.test(a)?"NY":/new jersey/.test(a)?"NJ":/new england/.test(a)?"NE":/pennsylvania|west virginia/.test(a)?"PA":/\bny\b/.test(a)?"NY":/\bnj\b/.test(a)?"NJ":/\bpa\b/.test(a)?"PA":""};
+const kpuKey=s=>String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+function kpuPlan(){
+  const H=KPU.home,R=KPU.rows||[],M=v=>{const x=parseFloat(String(v||"").replace(/[$,\s]/g,""));return isFinite(x)?x:null};
+  const yr=((String((R[0]||[]).join(" ")).match(/(20\d\d)\s*KPI/)||[])[1])||String(UI.season||"2026");
+  const hi=R.findIndex(r=>/^date$/i.test(String(r[0]||"").trim())&&/event name/i.test(String(r[1]||"")));
+  if(hi<0)return{err:"This doesn't look like a dashboard Annual KPIs sheet (no Date / Event Name header)."};
+  const sumRow=R.find((r,i)=>i<hi&&String(r[0]||"").trim()&&M(r[2])!=null);
+  const kpi=sumRow?{season:+yr,state:H,source:`${REG_NAME(H)} KPI sheet (${KPU.file})`,reportedEvents:M(sumRow[1]),reportedRegistrations:M(sumRow[2]),reportedGross:M(sumRow[3]),reportedDiscounts:Math.abs(M(sumRow[4])||0),reportedCredits:Math.abs(M(sumRow[6])||0),reportedNet:M(sumRow[7]),uniqueCustomers:M(sumRow[9])}:null;
+  const seen={},sheet=[];
+  R.slice(hi+1).forEach(r=>{const name=String(r[1]||"").trim();if(!name)return;const m=String(r[0]||"").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);if(!m)return;
+    const base=kpuKey(name);seen[base]=(seen[base]||0)+1;const nm=seen[base]>1?`${name} (${seen[base]})`:name;
+    sheet.push({name:nm,date:`${m[3]}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`,regs:M(r[2])||0,gross:M(r[3])||0,disc:Math.abs(M(r[4])||0),cred:Math.abs(M(r[6])||0),net:M(r[7])||0})});
+  const live=S.events.filter(e=>String(e.season)===yr&&finState(e.state)===H),used=new Set();
+  const find=(s,withDate)=>live.find(e=>!used.has(e.id)&&kpuKey(e.name)===kpuKey(s.name)&&(!withDate||e.date===s.date));
+  const updated=[],added=[],kept=[];
+  sheet.forEach(s=>{const e=find(s,true)||find(s,false);if(e){used.add(e.id);const c=calc(e);if(!s.gross&&c.gross>0)kept.push({e,s});updated.push({e,s,keepMoney:!s.gross&&c.gross>0})}else added.push({s})});
+  const notOnSheet=live.filter(e=>!used.has(e.id));
+  const T=sheet.reduce((a,s)=>(a.r+=s.regs,a.g+=s.gross,a.n+=s.net,a),{r:0,g:0,n:0});
+  return{H,yr,kpi,sheet,updated,added,kept,notOnSheet,T}}
+async function kpuSave(){
+  const P=KPU.plan;if(!P||P.err||!db)return;KPU.busy=true;render();const now=new Date().toISOString(),src=`${REG_NAME(P.H)} KPI sheet (${KPU.file})`,td=todayISO();
+  const ops=[];const typ=n=>/scout day/i.test(n)?"Scout Day":/games|all-star/i.test(n)?"Games":"Showcase / ID";
+  P.updated.forEach(({e,s,keepMoney})=>{const d={actualPlayers:s.regs,source:src,updatedAt:now};if(!keepMoney)Object.assign(d,{grossRevenue:s.gross,discounts:s.disc,credits:s.cred,netRevenue:s.net});if(s.date<=td&&e.status!=="Canceled")d.status="Completed";ops.push(["events",e.id,d])});
+  const taken=new Set(S.events.map(e=>e.id));
+  P.added.forEach(({s})=>{const st=P.H==="PA"&&/\bWV\b|west virginia/i.test(s.name)?"WV":P.H==="NE"?"MA":P.H;let id=`ev${P.yr.slice(2)}-${P.H.toLowerCase()}-`+cSlug(s.name.replace(/^20\d\d\s+/,""));while(taken.has(id))id+="-2";taken.add(id);
+    const status=s.date<=td?"Completed":"Registration open";
+    ops.push(["events",id,{name:s.name,date:s.date,season:+P.yr,state:st,type:typ(s.name),status,actualPlayers:s.regs,grossRevenue:s.gross,discounts:s.disc,credits:s.cred,netRevenue:s.net,source:src,createdAt:now}]);
+    ops.push(["schedule",id,{name:s.name,date:s.date,season:+P.yr,state:st,status,venue:""}])});
+  if(P.kpi)ops.push(["settings","kpi-"+P.yr+(P.H==="PA"?"":"-"+P.H.toLowerCase()),P.kpi]);
+  try{if(db.batch){for(let k=0;k<ops.length;k+=400){const b=db.batch();ops.slice(k,k+400).forEach(([c,id,d])=>b.set(db.collection(c).doc(id),d,{merge:true}));await b.commit()}}
+    else{for(const [c,id,d] of ops)await db.collection(c).doc(id).set(d,{merge:true})}
+    KPU.msg=`Saved. ${P.updated.length} events updated, ${P.added.length} added${P.kpi?", KPI summary updated":""}.`;KPU.plan=null;KPU.rows=null;UI.ovRegion=P.H;UI.season=P.yr;saveUI()}
+  catch(x){KPU.msg="Couldn't save: "+(x.message||x)}KPU.busy=false;render()}
+function kpuPanel(){
+  if(!KPU.open)return"";const P=KPU.plan;let prev="";
+  if(P&&P.err)prev=`<p class="err-msg">${esc(P.err)}</p>`;
+  else if(P){const li=(l,f)=>l.length?`<ul class="fc-list">${l.map(x=>`<li>${f(x)}</li>`).join("")}</ul>`:"";
+    const chg=P.updated.filter(u=>{const c=calc(u.e);return n(u.e.actualPlayers)!==u.s.regs||(!u.keepMoney&&(Math.round(c.gross)!==Math.round(u.s.gross)||Math.round(c.revenue)!==Math.round(u.s.net)))});
+    prev=`<div class="sec-gap"><p style="margin:0 0 8px"><b>${esc(REG_NAME(P.H))} ${esc(P.yr)}</b>: ${P.sheet.length} events · ${num(P.T.r)} registrations · ${money(P.T.g)} gross · ${money(P.T.n)} net on the sheet${P.kpi&&has(P.kpi.uniqueCustomers)?` · ${num(P.kpi.uniqueCustomers)} unique customers`:""}</p>
+     <p style="margin:0 0 8px"><b>${P.updated.length}</b> existing events matched (${chg.length} with changes) · <b>${P.added.length}</b> new events${P.notOnSheet.length?` · ${P.notOnSheet.length} ${esc(REG_NAME(P.H))} events not on the sheet (left as they are)`:""}</p>
+     ${chg.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${chg.length} events change</b></summary>${li(chg,u=>{const c=calc(u.e);return `${esc(u.s.name)}: ${num(n(u.e.actualPlayers))} → ${num(u.s.regs)} reg.${u.keepMoney?"":` · ${money(c.revenue)} → ${money(u.s.net)} net`}`})}</details>`:""}
+     ${P.added.length?`<details class="panel" style="margin-bottom:10px" open><summary><b>${P.added.length} new events</b></summary>${li(P.added,a=>`${esc(a.s.name)} · ${fmtDate(a.s.date)} · ${num(a.s.regs)} reg. · ${money(a.s.gross)} gross`)}</details>`:""}
+     ${P.kept.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${P.kept.length} events show $0 on the sheet. Their dollar amounts already in The Dugout are kept</b></summary>${li(P.kept,k=>`${esc(k.e.name)} · keeps ${money(calc(k.e).gross)} gross`)}</details>`:""}
+     ${P.notOnSheet.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${P.notOnSheet.length} events not on the sheet</b> (nothing changes)</summary>${li(P.notOnSheet,e=>`${esc(e.name)} · ${fmtDate(e.date)}`)}</details>`:""}
+     <button class="primary" type="button" data-kpu="save"${KPU.busy?" disabled":""}>${KPU.busy?"Saving…":`Save ${esc(REG_NAME(P.H))} ${esc(P.yr)} actuals`}</button></div>`}
+  return `<div class="panel quick" style="display:block;margin-bottom:16px"><div class="head" style="margin-bottom:8px"><div><h3 style="margin:0">Upload actuals CSV</h3><p class="muted" style="margin:2px 0 0;font-size:.88rem">The state dashboard's Annual KPIs tab, downloaded as CSV. Updates registrations and revenue for that state's events, adds events that aren't here yet, and updates the KPI summary. A $0 on the sheet never wipes an amount already entered. Nothing saves until you click Save.</p></div><button type="button" data-kpu="close">Close</button></div>
+   <div class="toolbar"><label class="upbtn" for="kpu-file">${KPU.file?"Change file":"Choose CSV file"}<input type="file" id="kpu-file" accept=".csv,text/csv" hidden></label>${KPU.file?`<span class="muted" style="font-size:.85rem">${esc(KPU.file)}</span>`:""}
+   ${KPU.rows?`${selHTML("kpu-home",KPU.home,[["","Which state's sheet?"]].concat(REG_OPTS),"Sheet")}<button type="button" data-kpu="preview"${KPU.home?"":" disabled"}>Preview</button>`:""}</div>
+   ${KPU.msg?`<p class="${/^Saved/.test(KPU.msg)?"":"err-msg"}" style="margin:8px 0 0">${esc(KPU.msg)}</p>`:""}${prev}</div>`}
+
 function vOverview(){
   const ov=REG_OK(UI.ovRegion||""), ev=seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)), T=totals(ev), KA=S.kpi||{}, ss=String(UI.season), stK=st=>st==="PA"?KA[ss]:KA[ss+"-"+st.toLowerCase()];
   const K=stK(ov)||{};
@@ -627,8 +680,8 @@ function vOverview(){
   const budgeted=ev.filter(e=>calc(e).hasBudget);
   const bRows=budgeted.sort((a,b)=>String(a.date).localeCompare(String(b.date))).map(e=>{const c=calc(e);const v=c.actual?c.net-c.bNet:null;
     return `<tr class="click" data-edit="events" data-id="${esc(e.id)}"><td class="name">${esc(e.name)}${sampleChip(e)}<span class="sub">${fmtDate(e.date)}</span></td><td class="num">${money(c.bNet)}</td><td class="num">${c.actual?money(c.net):"—"}</td><td class="num ${v==null?"":v>=0?"var-pos":"var-neg"}">${v==null?"—":(v>=0?"+":"")+money(v)}</td></tr>`}).join("");
-  return `<div class="head"><div><h2>${esc(UI.season)} Season KPIs${ov?` <span class="chip acc" style="font-size:.75rem;vertical-align:middle">${esc(REG_NAME(ov))}</span>`:""}</h2><p>${ov?`${esc(REG_NAME(ov))} events only. `:""}Totals from every event with registration data this season, including upcoming events with registrations to date. Canceled events are excluded.</p></div>
-    <div class="toolbar">${selHTML("ov-season",UI.season,seasons(),"Season")}${selHTML("ov-region",ov,REG_OPTS,"Region / state")}</div></div>
+  return kpuPanel()+`<div class="head"><div><h2>${esc(UI.season)} Season KPIs${ov?` <span class="chip acc" style="font-size:.75rem;vertical-align:middle">${esc(REG_NAME(ov))}</span>`:""}</h2><p>${ov?`${esc(REG_NAME(ov))} events only. `:""}Totals from every event with registration data this season, including upcoming events with registrations to date. Canceled events are excluded.</p></div>
+    <div class="toolbar">${selHTML("ov-season",UI.season,seasons(),"Season")}${selHTML("ov-region",ov,REG_OPTS,"Region / state")}<button type="button" data-kpu="open"${canWrite&&db?"":" disabled"}>⬆ Upload actuals CSV</button></div></div>
   <div class="kpis">
    ${kpi("Events",num(T.events),`${T.paid} paid · ${T.scout} scout days`)}
    ${kpi("Registrations",num(T.regs),`${T.events?num(T.regs/T.events):0} per event`)}
@@ -1412,6 +1465,7 @@ window.addEventListener("hashchange",()=>setTab(location.hash.slice(1)));
 document.getElementById("tabs").addEventListener("click",e=>{const a=e.target.closest("a[data-tab]");if(a){e.preventDefault();try{history.replaceState(null,"","#"+a.dataset.tab)}catch(x){}setTab(a.dataset.tab,true);window.scrollTo(0,0)}});
 document.addEventListener("input",e=>{if(e.target.id==="tn-input")UI.tnDraft=e.target.value});
 document.addEventListener("click",async e=>{
+  {const kb=e.target.closest("[data-kpu]");if(kb){const a=kb.dataset.kpu;if(a==="open"){KPU.open=true;KPU.msg=""}else if(a==="close"){Object.assign(KPU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){KPU.plan=kpuPlan();KPU.msg=""}else if(a==="save"){await kpuSave();return}render();return}}
   {const fb=e.target.closest("[data-fcu]");if(fb){const a=fb.dataset.fcu;if(a==="open"){FCU.open=true;FCU.msg=""}else if(a==="close"){Object.assign(FCU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){FCU.plan=fcuPlan();FCU.msg=""}else if(a==="save"){await fcuSave();return}render();return}}
   {const ed=e.target.closest("[data-tnedit]");if(ed&&UI.profile){UI.toolEdit=UI.profile+":"+ed.dataset.tnedit;UI.tnDraft=null;render();setTimeout(()=>{const t=document.getElementById("tn-input");if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length)}},60);return}
    if(e.target.closest("[data-tncancel]")){UI.toolEdit=null;UI.tnDraft=null;render();return}
@@ -1511,6 +1565,8 @@ document.addEventListener("submit",async e=>{if(e.target.id!=="vid-link-form")re
 document.addEventListener("change",async e=>{
   const t=e.target,id=t.id;
   if(id==="fcu-file"&&t.files&&t.files[0]){const f=t.files[0];try{FCU.rows=parseCSV(await f.text());FCU.file=f.name;FCU.home=fcuGuess(f.name);FCU.plan=null;FCU.msg=""}catch(x){FCU.msg="Couldn't read that file."}render();return}
+  if(id==="kpu-file"&&t.files&&t.files[0]){const f=t.files[0];try{KPU.rows=parseCSV(await f.text());KPU.file=f.name;KPU.home=kpuGuess(f.name,KPU.rows);KPU.plan=null;KPU.msg=""}catch(x){KPU.msg="Couldn't read that file."}render();return}
+  if(id==="kpu-home"){KPU.home=t.value;KPU.plan=null;render();return}
   if(id==="fcu-home"){FCU.home=t.value;FCU.plan=null;render();return}
   const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth","ev-state":"evState"};
   if(map[id]){UI[map[id]]=t.value;saveUI();render();return}
