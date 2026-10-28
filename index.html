@@ -769,14 +769,33 @@ function vStaff(){
    <tbody>${rows||emptyRow(6,waiting("staff")?"Loading staff…":"No staff yet.","staff","Add staff")}</tbody></table></div>`;
 }
 
-/* One-click email to a task's assignee (opens the sender's own mail app). */
+/* Which mail service to open: from the signed-in email's domain (Gmail, Outlook, Yahoo), or the device's mail app. */
+const MAILP={pref:(()=>{try{return localStorage.getItem("pbrMailPref")||"auto"}catch(e){return"auto"}})(),auto:(()=>{try{return JSON.parse(localStorage.getItem("pbrMailAuto")||"null")}catch(e){return null}})()};
+function mailProvider(){if(MAILP.pref&&MAILP.pref!=="auto")return MAILP.pref;const a=MAILP.auto;return a&&a.email===ME_EMAIL?a.prov:"app"}
+async function detectMail(){if(!ME_EMAIL)return;if(MAILP.auto&&MAILP.auto.email===ME_EMAIL&&MAILP.auto.prov!=="app")return;
+  const dom=ME_EMAIL.split("@")[1]||"";let prov="app";
+  if(/^(gmail|googlemail)\.com$/.test(dom))prov="gmail";
+  else if(/^(outlook|hotmail|live|msn)\.[a-z.]+$/.test(dom))prov="outlook";
+  else if(/^(yahoo|ymail)\.[a-z.]+$/.test(dom))prov="yahoo";
+  else{try{const r=await fetch("https://dns.google/resolve?name="+encodeURIComponent(dom)+"&type=MX");const j=await r.json();const mx=(j.Answer||[]).map(a=>String(a.data).toLowerCase()).join(" ");
+    if(/google\.com|googlemail\.com/.test(mx))prov="gmail";else if(/outlook\.com|office365|protection\.outlook/.test(mx))prov="o365";}catch(e){}}
+  MAILP.auto={email:ME_EMAIL,prov};try{localStorage.setItem("pbrMailAuto",JSON.stringify(MAILP.auto))}catch(e){}if(UI.tab==="tasks")render()}
+function composeURL(to,subject,body){const prov=mailProvider(),q=encodeURIComponent;
+  if(prov==="gmail")return"https://mail.google.com/mail/?view=cm&fs=1&to="+q(to)+"&su="+q(subject)+"&body="+q(body)+(ME_EMAIL?"&authuser="+q(ME_EMAIL):"");
+  if(prov==="outlook")return"https://outlook.live.com/mail/0/deeplink/compose?to="+q(to)+"&subject="+q(subject)+"&body="+q(body);
+  if(prov==="o365")return"https://outlook.office.com/mail/deeplink/compose?to="+q(to)+"&subject="+q(subject)+"&body="+q(body);
+  if(prov==="yahoo")return"https://compose.mail.yahoo.com/?to="+q(to)+"&subject="+q(subject)+"&body="+q(body);
+  return"mailto:"+q(to)+"?subject="+q(subject)+"&body="+q(body)}
+const mailAttrs=href=>/^https?:/.test(href)?' target="_blank" rel="noopener"':"";
+const MAIL_LABEL={auto:"Automatic",gmail:"Gmail",outlook:"Outlook.com",o365:"Outlook (work / Microsoft 365)",yahoo:"Yahoo Mail",app:"Device mail app"};
+/* One-click email to a task's assignee (opens the sender's own mail service). */
 function taskMailHref(t){const st=byId("staff",t.assigneeId);if(!st||!st.email)return"";const ev=byId("events",t.eventId)||byId("schedule",t.eventId);
   const first=String(st.name||"").split(" ")[0]||"there",me=(typeof meName==="function"?meName():"");
   const link=location.origin+location.pathname+"#tasks";
   const lines=[`Hi ${first},`,"","You've been assigned a task in The Dugout:","",`Task: ${t.title||""}`];
   if(ev)lines.push(`Event: ${ev.name}`);if(t.due)lines.push(`Due: ${fmtDate(t.due)}`);if(t.priority)lines.push(`Priority: ${t.priority}`);if(t.notes)lines.push("",`Notes: ${t.notes}`);
   lines.push("",`Open The Dugout: ${link}`);if(me&&me!=="Staff")lines.push("",`- ${me}`);
-  return "mailto:"+encodeURIComponent(st.email)+"?subject="+encodeURIComponent("New task: "+(t.title||""))+"&body="+encodeURIComponent(lines.join("\n"));
+  return composeURL(st.email,"New task: "+(t.title||""),lines.join("\n"));
 }
 function vTasks(){
   const td=todayISO(), pr={High:0,Medium:1,Low:2};
@@ -787,14 +806,14 @@ function vTasks(){
   const overdue=S.tasks.filter(t=>t.status!=="Done"&&t.due&&t.due<td).length;
   const rows=list.map(t=>{const late=t.status!=="Done"&&t.due&&t.due<td;const who=byId("staff",t.assigneeId),ev=byId("events",t.eventId);
     const pc={High:"bad",Medium:"warn",Low:""}[t.priority]||"";
-    return `<tr class="click" data-edit="tasks" data-id="${esc(t.id)}"><td class="name">${esc(t.title)}${sampleChip(t)}<span class="sub">${ev?esc(ev.name):"General"}</span></td><td>${who?esc(who.name)+(who.email&&t.status!=="Done"?` <a href="${esc(taskMailHref(t))}" title="Email ${esc(who.name)} about this task" aria-label="Email ${esc(who.name)} about this task" style="text-decoration:none">✉</a>`:""):'<span class="muted">Unassigned</span>'}</td>
+    return `<tr class="click" data-edit="tasks" data-id="${esc(t.id)}"><td class="name">${esc(t.title)}${sampleChip(t)}<span class="sub">${ev?esc(ev.name):"General"}</span></td><td>${who?esc(who.name)+(who.email&&t.status!=="Done"?` <a href="${esc(taskMailHref(t))}"${mailAttrs(taskMailHref(t))} title="Email ${esc(who.name)} about this task" aria-label="Email ${esc(who.name)} about this task" style="text-decoration:none">✉</a>`:""):'<span class="muted">Unassigned</span>'}</td>
      <td class="num">${late?'<span class="chip bad">Overdue</span> ':""}${fmtDate(t.due)}</td><td><span class="chip ${pc}">${esc(t.priority||"Medium")}</span></td>
      <td><select class="cell" data-status="${esc(t.id)}" id="ts_${esc(t.id)}" aria-label="Status"${canWrite?"":" disabled"}>${["To do","In progress","Done"].map(s=>`<option${(t.status||"To do")===s?" selected":""}>${s}</option>`).join("")}</select></td></tr>`}).join("");
   const tm=UI.taskMail&&byId("tasks",UI.taskMail),tmSt=tm&&byId("staff",tm.assigneeId);
-  const mailBar=tm&&tmSt&&tmSt.email?`<div class="filt-on" role="status" style="background:var(--good-soft)"><span><b>Task saved and assigned to ${esc(tmSt.name)}.</b> Let them know by email:</span><span style="display:flex;gap:6px"><a class="small primary" style="padding:4px 10px;border-radius:var(--r);background:var(--accent);color:var(--accent-ink);text-decoration:none;font-weight:600;font-size:.8rem" href="${esc(taskMailHref(tm))}" data-tmail="1">✉ Email ${esc(String(tmSt.name).split(" ")[0])}</a><button class="small" type="button" data-tmdismiss="1">Dismiss</button></span></div>`
+  const mailBar=tm&&tmSt&&tmSt.email?`<div class="filt-on" role="status" style="background:var(--good-soft)"><span><b>Task saved and assigned to ${esc(tmSt.name)}.</b> Let them know by email:</span><span style="display:flex;gap:6px"><a class="small primary" style="padding:4px 10px;border-radius:var(--r);background:var(--accent);color:var(--accent-ink);text-decoration:none;font-weight:600;font-size:.8rem" href="${esc(taskMailHref(tm))}"${mailAttrs(taskMailHref(tm))} data-tmail="1">✉ Email ${esc(String(tmSt.name).split(" ")[0])}</a><button class="small" type="button" data-tmdismiss="1">Dismiss</button></span></div>`
     :tm&&tmSt?`<div class="filt-on" role="status"><span><b>Task assigned to ${esc(tmSt.name)}</b>, but there's no email on their Staff profile, so no email can be sent.</span><button class="small" type="button" data-tmdismiss="1">Dismiss</button></div>`:"";
   return mailBar+`<div class="head"><div><h2>Tasks</h2><p>${S.tasks.filter(t=>t.status!=="Done").length} open${overdue?` · <span class="var-neg">${overdue} overdue</span>`:""}. Change status right in the table.</p></div>
-   <div class="toolbar">${selHTML("tk-status",UI.taskStatus,["Open","To do","In progress","Done","All"],"Status")}${selHTML("tk-who",UI.taskWho,[["","Everyone"],["none","Unassigned"]].concat(S.staff.map(s=>[s.id,s.name])),"Assigned to")}${selHTML("tk-event",UI.taskEvent,[["","All events"]].concat(S.events.map(e=>[e.id,e.name+" ("+(e.season||"")+")"])),"Event")}${addBtn("tasks","Add task")}</div></div>
+   <div class="toolbar">${selHTML("tk-status",UI.taskStatus,["Open","To do","In progress","Done","All"],"Status")}${selHTML("tk-who",UI.taskWho,[["","Everyone"],["none","Unassigned"]].concat(S.staff.map(s=>[s.id,s.name])),"Assigned to")}${selHTML("tk-event",UI.taskEvent,[["","All events"]].concat(S.events.map(e=>[e.id,e.name+" ("+(e.season||"")+")"])),"Event")}${selHTML("tk-mail",MAILP.pref||"auto",Object.entries(MAIL_LABEL).map(([k,v])=>[k,k==="auto"?`Automatic (${MAIL_LABEL[(MAILP.auto&&MAILP.auto.email===ME_EMAIL&&MAILP.auto.prov)||"app"].replace(/ \(.*\)/,"")})`:v]),"Email with")}${addBtn("tasks","Add task")}</div></div>
    <div class="tbl"><table><thead><tr><th>Task</th><th>Assigned to</th><th class="num">Due</th><th>Priority</th><th>Status</th></tr></thead>
    <tbody>${rows||emptyRow(5,waiting("tasks")?"Loading tasks…":"No tasks match these filters.","tasks","Add task")}</tbody></table></div>`;
 }
@@ -1239,7 +1258,7 @@ document.addEventListener("click",async e=>{
     if(col==="tasks"&&UI.taskEvent)preset.eventId=UI.taskEvent;
     openForm(col,null,preset);return}
   if(t.closest("[data-tmdismiss]")){UI.taskMail=null;render();return}
-  if(t.closest('a[href^="mailto:"]')){e.stopPropagation();if(t.closest("[data-tmail]"))setTimeout(()=>{UI.taskMail=null;render()},400);return}
+  if(t.closest('a[href^="mailto:"],a[data-tmail],td a[target="_blank"]')){e.stopPropagation();if(t.closest("[data-tmail]"))setTimeout(()=>{UI.taskMail=null;render()},400);return}
   const mv=t.closest("[data-mv]");if(mv){e.stopPropagation();if(mv.disabled)return;const d=rkActive();if(!d||!db)return;
     const ord=rkOrder(d).filter(x=>!UI.rkState||x.p.state===UI.rkState);
     const i=ord.findIndex(x=>x.p.id===mv.dataset.id),j=mv.dataset.mv==="up"?i-1:i+1;if(i<0||j<0||j>=ord.length)return;
@@ -1303,6 +1322,7 @@ document.addEventListener("change",async e=>{
   const t=e.target,id=t.id;
   const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth"};
   if(map[id]){UI[map[id]]=t.value;saveUI();render();return}
+  if(id==="tk-mail"){MAILP.pref=t.value;try{localStorage.setItem("pbrMailPref",t.value)}catch(x){}render();return}
   if(id==="rk-ver"){if(t.value==="__new"){t.value=UI.rkVer||"";if(!db)return;try{await rkNewDraft()}catch(err){alert(errText(err))}return}UI.rkVer=t.value;saveUI();render();return}
   if(id==="rk-class"){UI.rkClass=t.value;UI.rkVer="";saveUI();render();return}
   if(id==="rk-addp"&&t.value){const d=rkActive();if(!d||!db)return;const ord=rkOrder(d);const ranks=Object.assign({},d.ranks);ranks[t.value]=(ord.length?ord[ord.length-1].r:0)+1;d.ranks=ranks;render();try{await rkSaveDraft(d,ranks)}catch(err){alert(errText(err))}return}
@@ -1359,7 +1379,7 @@ function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.
     let level=owners.includes(email)?"Full":null;
     if(!level){try{const a=await fs.collection("access").doc(email).get();if(a.exists)level=a.data().level==="Full"?"Full":"Partial"}catch(e){}}
     if(!level){dbState="off";sync.textContent="No access";gate(`<h2>Not on the staff list</h2><p>${esc(email)} doesn't have access to The Dugout yet. Ask Nathan to add this email on the Staff tab.</p><button type="button" id="g-out">Sign out</button>`);document.getElementById("g-out").onclick=()=>auth.signOut();return}
-    started=true;gated=false;ME_EMAIL=email;
+    started=true;gated=false;ME_EMAIL=email;setTimeout(detectMail,0);
     document.getElementById("tabs").hidden=false;
     db=fs;dbState="on";canWrite=true;isFull=level==="Full";
     if(isFull)document.getElementById("viewas").hidden=false;
