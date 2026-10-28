@@ -361,7 +361,7 @@ const RANK_STATES=["PA","WV","NY","NJ"].concat(NE_STATES);
 const REG_OPTS=[["PA","PA"],["NY","NY"],["NJ","NJ"],["NE","New England"]];
 const REG_OK=v=>REG_OPTS.some(x=>x[0]===v)?v:"PA";
 /* Each financial record belongs to exactly one state. WV is part of PA. Anything without a recognised single state (blank, "Nat.", "Reg") came from the PA sheet, so it counts as PA. */
-const finState=st=>{st=String(st||"").trim().toUpperCase();return st==="WV"?"PA":["PA","NY","NJ"].includes(st)?st:NE_STATES.includes(st)?"NE":"PA"};
+const finState=st=>{const one=x=>x==="WV"?"PA":["PA","NY","NJ","NE"].includes(x)?x:NE_STATES.includes(x)?"NE":null;st=String(st||"").trim().toUpperCase();const parts=st.split(/\s*\/\s*/).map(one);return parts.length&&parts.every(x=>x&&x===parts[0])?parts[0]:"PA"};
 const REG_NAME=v=>(REG_OPTS.find(x=>x[0]===v)||["",v])[1];
 function regMatch(st,f){return finState(st)===(REG_OK(f||"PA"))}
 const regionOf=st=>{st=st||"PA";return st==="PA"||st==="WV"?"PAWV":st==="NY"?"NY":st==="NJ"?"NJ":NE_STATES.includes(st)?"NE":null};
@@ -643,7 +643,7 @@ async function kpuSave(){
   const ops=[];const typ=n=>/scout day/i.test(n)?"Scout Day":/games|all-star/i.test(n)?"Games":"Showcase / ID";
   P.updated.forEach(({e,s,keepMoney})=>{const d={actualPlayers:s.regs,source:src,updatedAt:now};if(!keepMoney)Object.assign(d,{grossRevenue:s.gross,discounts:s.disc,credits:s.cred,netRevenue:s.net});if(s.date<=td&&e.status!=="Canceled")d.status="Completed";ops.push(["events",e.id,d])});
   const taken=new Set(S.events.map(e=>e.id));
-  P.added.forEach(({s})=>{const st=P.H==="PA"&&/\bWV\b|west virginia/i.test(s.name)?"WV":P.H==="NE"?"MA":P.H;let id=`ev${P.yr.slice(2)}-${P.H.toLowerCase()}-`+cSlug(s.name.replace(/^20\d\d\s+/,""));while(taken.has(id))id+="-2";taken.add(id);
+  P.added.forEach(({s})=>{const NEN=[["CT",/connecticut|\bct\b/i],["RI",/rhode island|\bri\b|\buri\b/i],["NH",/new hampshire|\bnh\b/i],["ME",/maine\b|\bme\b/i],["VT",/vermont|\bvt\b/i],["MA",/massachusetts|\bma\b|boston/i]];const st=P.H==="PA"&&/\bWV\b|west virginia/i.test(s.name)?"WV":P.H==="NE"?((NEN.find(([,r])=>r.test(s.name))||["NE"])[0]):P.H;let id=`ev${P.yr.slice(2)}-${P.H.toLowerCase()}-`+cSlug(s.name.replace(/^20\d\d\s+/,""));while(taken.has(id))id+="-2";taken.add(id);
     const status=s.date<=td?"Completed":"Registration open";
     ops.push(["events",id,{name:s.name,date:s.date,season:+P.yr,state:st,type:typ(s.name),status,actualPlayers:s.regs,grossRevenue:s.gross,discounts:s.disc,credits:s.cred,netRevenue:s.net,source:src,createdAt:now}]);
     ops.push(["schedule",id,{name:s.name,date:s.date,season:+P.yr,state:st,status,venue:""}])});
@@ -750,7 +750,7 @@ function fcSum(list){const T={n:list.length,p:0,t:0,ap:0,at:0,lyp:0,lyt:0,lyn:0,
 /* ---------- Forecast sheet upload: replaces one state's 2027 forecast with the rows on a dashboard Forecast CSV ---------- */
 const FCU={open:false,file:"",rows:null,home:"",plan:null,msg:"",busy:false};
 const fcuGuess=f=>{f=String(f||"").toLowerCase();return /pennsylvania|\bpa\b/.test(f)?"PA":/new york|\bny\b/.test(f)?"NY":/new jersey|\bnj\b/.test(f)?"NJ":/new england/.test(f)?"NE":/west virginia|\bwv\b/.test(f)?"PA":""};
-const fcKey=s=>String(s||"").toLowerCase().replace(/\s*\((pa|wv|ny|nj|ne) (allocation|forecast)\)\s*$/,"").replace(/^2027\s+/,"").replace(/[^a-z0-9]/g,"");
+const fcKey=s=>String(s||"").toLowerCase().replace(/\s*\(\)\s*$/,"").replace(/\s*\((pa|wv|ny|nj|ne) (allocation|forecast)\)\s*$/,"").replace(/^2027\s+/,"").replace(/[^a-z0-9]/g,"");
 const FC_ALIAS={pasummeridharrisburg:"pasummerid",pasummeridlancaster:"paopengameeast",pasummeridpittsburgharea:"paopengamewest",pafallgames:"pafallopengame"};
 const fcuMoney=v=>{const x=parseFloat(String(v||"").replace(/[$,\s]/g,""));return isFinite(x)?x:null};
 const fcuISO=s=>{const d=new Date(String(s||"").replace(/^[A-Za-z]+,\s*/,""));if(!/\d{4}/.test(String(s||""))||isNaN(d))return null;return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
@@ -765,18 +765,19 @@ function fcuPlan(){
     if(brand==="HS Date"){keyDates.push({name:name+" ("+H+")",date:fcuISO(fdate),due:fcuMDY(g(14))});return}
     if(brand==="Landmine"){land.push(fdate?`${name} (${fdate})`:name);return}
     const total=fcuMoney(g(10))||0,pl=fcuMoney(g(8));if(!pl&&!total){skipped++;return}
-    if(brand==="Open ID"&&/^2027 /.test(name))lastOpen=name.replace(new RegExp("^2027 ("+H+" )?"),"");
-    let state=homeStates.includes(st)?st:H;
-    if(state!==st&&st){name=/procase/i.test(name)?name.replace(/procase/i,"ProCase")+` (${H} forecast)`:name.replace(/^2027\s+/,"")+` (${H} allocation)`}
-    if(nameCount[g(3).toLowerCase()]>1&&state===st||nameCount[g(3).toLowerCase()]>1&&!st){if(/piggy/i.test(name))name=`Rising Stars piggyback (${lastOpen})`;else if(/freshman free/i.test(name))name=`${name} (${lastOpen||fdate})`}
+    if(brand==="Open ID"&&!/freshman free|rising stars/i.test(name))lastOpen=name.replace(new RegExp("^2027 ("+H+" )?"),"");
+    const inHome=!!st&&finState(st)===H&&(H!=="PA"||st.split(/\s*\/\s*/).every(x=>x==="PA"||x==="WV"));let state=inHome?st:H;
+    if(!inHome&&st){name=/procase/i.test(name)?name.replace(/procase/i,"ProCase")+` (${H} forecast)`:name.replace(/^2027\s+/,"")+` (${H} allocation)`}
+    if(nameCount[g(3).toLowerCase()]>1&&lastOpen&&H==="NY"){if(/piggy/i.test(name))name=`Rising Stars piggyback (${lastOpen})`;else if(/freshman free/i.test(name))name=`${name} (${lastOpen})`}
     const iso=fcuISO(fdate);
     sheet.push({name,brand,state,month:g(1),players:pl||0,avg:fcuMoney(g(9)),total,lyEvent:g(6),zip:g(7)?g(7).padStart(5,"0"):"",date:iso,dateText:iso?`${+iso.slice(5,7)}/${+iso.slice(8,10)}/${iso.slice(0,4)}`:(fdate||"TBD"),due:fcuMDY(g(14)),booked:/^true$/i.test(g(15))})});
-  const live=(S.fc27||[]).filter(r=>homeStates.includes(finState(r.state)));const used=new Set();
+  {const cnt={};sheet.forEach(x=>{cnt[x.name]=(cnt[x.name]||0)+1});sheet.forEach(x=>{if(cnt[x.name]>1)x.name=`${x.name} (${x.date?fmtDate(x.date):x.dateText&&x.dateText!=="TBD"?x.dateText:x.month||"TBD"})`});const c2={};sheet.forEach(x=>{c2[x.name]=(c2[x.name]||0)+1;if(c2[x.name]>1)x.name+=` #${c2[x.name]}`})}
+  const live=(S.fc27||[]).filter(r=>finState(r.state)===H);const used=new Set();
   const find=k=>live.find(r=>!used.has(r.id)&&fcKey(r.name)===k);
   const updated=[],added=[];
   sheet.forEach((s,i)=>{const k=fcKey(s.name);const m=find(k)||(FC_ALIAS[k]&&find(FC_ALIAS[k]));if(m){used.add(m.id);updated.push({id:m.id,s,old:m})}else added.push({s})});
   const hidden=live.filter(r=>!used.has(r.id)&&!r.removed);
-  const tot={};sheet.forEach(s=>{const t=tot[s.state]||(tot[s.state]={n:0,p:0,t:0});t.n++;t.p+=s.players;t.t+=s.total});
+  const tot={};sheet.forEach(s=>{const fk=finState(s.state),t=tot[fk]||(tot[fk]={n:0,p:0,t:0});t.n++;t.p+=s.players;t.t+=s.total});
   return{H,updated,added,hidden,keyDates,land,notC,skipped,tot}}
 async function fcuSave(){
   const P=FCU.plan;if(!P||P.err||!db)return;FCU.busy=true;render();const now=new Date().toISOString(),src=`${P.H} forecast sheet (${FCU.file})`;
