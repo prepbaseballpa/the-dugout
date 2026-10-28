@@ -694,9 +694,70 @@ const pctChip=(a,b)=>{if(!b)return"";const v=(a-b)/b*100;return `<span class="${
 function fcSum(list){const T={n:list.length,p:0,t:0,ap:0,at:0,lyp:0,lyt:0,lyn:0,booked:0,linked:0};
   list.forEach(r=>{T.p+=n(r.players);T.t+=fcTotal(r);if(r.booked)T.booked++;const a=fcAct(r);if(a){T.linked++;T.ap+=a.regs;T.at+=a.gross}
     const ly=fcLY(r);if(ly){const c=calc(ly);T.lyp+=c.regs;T.lyt+=c.gross;T.lyn++}});return T}
+/* ---------- Forecast sheet upload: replaces one state's 2027 forecast with the rows on a dashboard Forecast CSV ---------- */
+const FCU={open:false,file:"",rows:null,home:"",plan:null,msg:"",busy:false};
+const fcuGuess=f=>{f=String(f||"").toLowerCase();return /pennsylvania|\bpa\b/.test(f)?"PA":/new york|\bny\b/.test(f)?"NY":/new jersey|\bnj\b/.test(f)?"NJ":/new england/.test(f)?"NE":/west virginia|\bwv\b/.test(f)?"WV":""};
+const fcKey=s=>String(s||"").toLowerCase().replace(/\s*\((pa|wv|ny|nj|ne) (allocation|forecast)\)\s*$/,"").replace(/^2027\s+/,"").replace(/[^a-z0-9]/g,"");
+const FC_ALIAS={pasummeridharrisburg:"pasummerid",pasummeridlancaster:"paopengameeast",pasummeridpittsburgharea:"paopengamewest",pafallgames:"pafallopengame"};
+const fcuMoney=v=>{const x=parseFloat(String(v||"").replace(/[$,\s]/g,""));return isFinite(x)?x:null};
+const fcuISO=s=>{const d=new Date(String(s||"").replace(/^[A-Za-z]+,\s*/,""));if(!/\d{4}/.test(String(s||""))||isNaN(d))return null;return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
+const fcuMDY=s=>{const m=String(s||"").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);return m?`${m[3]}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`:null};
+function fcuPlan(){
+  const H=FCU.home,R=FCU.rows||[];const hi=R.findIndex(r=>r.some(c=>/Forecast Players/i.test(c)));if(hi<0)return{err:"This doesn't look like a dashboard Forecast sheet (no \"Forecast Players\" column)."};
+  const homeStates=H==="PA"?["PA","WV"]:[H];const sheet=[],keyDates=[],land=[],notC=[];let lastOpen="",skipped=0;
+  const raw=R.slice(hi+1).filter(r=>r.length>=16&&String(r[3]||"").trim());
+  const nameCount={};raw.forEach(r=>{const k=String(r[3]).trim().toLowerCase();nameCount[k]=(nameCount[k]||0)+1});
+  R.slice(hi+1).forEach(r=>{const x=String(r[29]||"").trim();if(H==="PA"&&/^2026 /.test(x)&&!notC.includes(x))notC.push(x)});
+  raw.forEach(r=>{const g=i=>String(r[i]||"").trim();let name=g(3),st=g(2).toUpperCase(),brand=g(4),fdate=g(5);
+    if(brand==="HS Date"){keyDates.push({name:name+" ("+H+")",date:fcuISO(fdate),due:fcuMDY(g(14))});return}
+    if(brand==="Landmine"){land.push(fdate?`${name} (${fdate})`:name);return}
+    const total=fcuMoney(g(10))||0,pl=fcuMoney(g(8));if(!pl&&!total){skipped++;return}
+    if(brand==="Open ID"&&/^2027 /.test(name))lastOpen=name.replace(new RegExp("^2027 ("+H+" )?"),"");
+    let state=homeStates.includes(st)?st:H;
+    if(state!==st&&st){name=/procase/i.test(name)?name.replace(/procase/i,"ProCase")+` (${H} forecast)`:name.replace(/^2027\s+/,"")+` (${H} allocation)`}
+    if(nameCount[g(3).toLowerCase()]>1&&state===st||nameCount[g(3).toLowerCase()]>1&&!st){if(/piggy/i.test(name))name=`Rising Stars piggyback (${lastOpen})`;else if(/freshman free/i.test(name))name=`${name} (${lastOpen||fdate})`}
+    const iso=fcuISO(fdate);
+    sheet.push({name,brand,state,month:g(1),players:pl||0,avg:fcuMoney(g(9)),total,lyEvent:g(6),zip:g(7)?g(7).padStart(5,"0"):"",date:iso,dateText:iso?`${+iso.slice(5,7)}/${+iso.slice(8,10)}/${iso.slice(0,4)}`:(fdate||"TBD"),due:fcuMDY(g(14)),booked:/^true$/i.test(g(15))})});
+  const live=(S.fc27||[]).filter(r=>homeStates.includes(finState(r.state)));const used=new Set();
+  const find=k=>live.find(r=>!used.has(r.id)&&fcKey(r.name)===k);
+  const updated=[],added=[];
+  sheet.forEach((s,i)=>{const k=fcKey(s.name);const m=find(k)||(FC_ALIAS[k]&&find(FC_ALIAS[k]));if(m){used.add(m.id);updated.push({id:m.id,s,old:m})}else added.push({s})});
+  const hidden=live.filter(r=>!used.has(r.id)&&!r.removed);
+  const tot={};sheet.forEach(s=>{const t=tot[s.state]||(tot[s.state]={n:0,p:0,t:0});t.n++;t.p+=s.players;t.t+=s.total});
+  return{H,updated,added,hidden,keyDates,land,notC,skipped,tot}}
+async function fcuSave(){
+  const P=FCU.plan;if(!P||P.err||!db)return;FCU.busy=true;render();const now=new Date().toISOString(),src=`${P.H} forecast sheet (${FCU.file})`;
+  const base={PA:0,WV:0,NJ:100,NY:200,NE:300}[P.H]||0;const ops=[];
+  const doc=(s,i,isNew)=>{const d={name:s.name,state:s.state,month:s.month,players:s.players,avg:s.avg,total:s.total,lyEvent:s.lyEvent,date:s.date,dateText:s.dateText,due:s.due,source:src,order:base+i+1,removed:false,updatedAt:now};if(s.brand)d.brand=s.brand;else if(isNew)d.brand="Open ID";if(s.zip)d.zip=s.zip;if(isNew)d.booked=s.booked;return d};
+  let i=0;P.updated.forEach(u=>ops.push([u.id,doc(u.s,i++,false)]));
+  const stamp=Date.now().toString(36);P.added.forEach((a,j)=>ops.push([`fc27-${a.s.state.toLowerCase()}-u${stamp}-${j+1}`,doc(a.s,i++,true)]));
+  P.hidden.forEach(r=>ops.push([r.id,{removed:true,removedNote:"Not on the "+FCU.file+" sheet",updatedAt:now}]));
+  const meta=S.fc27meta||{};const sfx=new RegExp("\\("+P.H+"\\)$");
+  const kd=(meta.keyDates||[]).filter(k=>{const m=String(k.name||"").match(/\((PA|WV|NY|NJ|NE)\)$/);return P.H==="PA"?!!m&&m[1]!=="PA":!sfx.test(k.name)}).concat(P.keyDates);
+  const md={keyDates:kd};md["landmines"+P.H]=P.land;if(P.H==="PA")md.notCarried=P.notC;ops.push(["fc27-meta",md]);
+  try{if(db.batch){for(let k=0;k<ops.length;k+=400){const b=db.batch();ops.slice(k,k+400).forEach(([id,d])=>b.set(db.collection("settings").doc(id),d,{merge:true}));await b.commit()}}
+    else{for(const [id,d] of ops)await db.collection("settings").doc(id).set(d,{merge:true})}
+    FCU.msg=`Saved. ${P.updated.length} updated, ${P.added.length} added, ${P.hidden.length} hidden.`;FCU.plan=null;FCU.rows=null;UI.fcState=P.H;saveUI()}
+  catch(x){FCU.msg="Couldn't save: "+(x.message||x)}FCU.busy=false;render()}
+function fcuPanel(){
+  if(!FCU.open)return"";const P=FCU.plan;let prev="";
+  if(P&&P.err)prev=`<p class="err-msg">${esc(P.err)}</p>`;
+  else if(P){const li=(l,f)=>l.length?`<ul class="fc-list">${l.map(x=>`<li>${f(x)}</li>`).join("")}</ul>`:"";
+    const chg=P.updated.filter(u=>u.old.removed||n(u.old.players)!==u.s.players||n(u.old.total)!==u.s.total||u.old.name!==u.s.name||(u.old.dateText||"")!==u.s.dateText);
+    prev=`<div class="sec-gap"><p style="margin:0 0 8px">${Object.entries(P.tot).map(([s,t])=>`<b>${esc(REG_NAME(s))}</b>: ${t.n} events · ${num(t.p)} players · ${money(t.t)}`).join(" &nbsp;|&nbsp; ")}</p>
+     <p style="margin:0 0 8px"><b>${P.updated.length}</b> existing rows updated (${chg.length} with changes) · <b>${P.added.length}</b> new · <b>${P.hidden.length}</b> hidden because they're not on the sheet${P.skipped?` · ${P.skipped} rows without numbers skipped`:""}</p>
+     ${chg.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${chg.length} rows change</b></summary>${li(chg,u=>`${esc(u.s.name)}${u.old.name!==u.s.name?` <span class="muted">(was ${esc(u.old.name)})</span>`:""}: ${num(n(u.old.players))} → ${num(u.s.players)} players · ${money(n(u.old.total))} → ${money(u.s.total)}`)}</details>`:""}
+     ${P.added.length?`<details class="panel" style="margin-bottom:10px" open><summary><b>${P.added.length} new rows</b></summary>${li(P.added,a=>`${esc(a.s.name)} · ${num(a.s.players)} players · ${money(a.s.total)}`)}</details>`:""}
+     ${P.hidden.length?`<details class="panel" style="margin-bottom:10px" open><summary><b>${P.hidden.length} rows hidden</b></summary>${li(P.hidden,r=>`${esc(r.name)} · ${esc(r.state||"")}`)}</details>`:""}
+     <button class="primary" type="button" data-fcu="save"${FCU.busy?" disabled":""}>${FCU.busy?"Saving…":`Replace the ${esc(REG_NAME(P.H))}${P.H==="PA"?" and WV":""} forecast`}</button></div>`}
+  return `<div class="panel quick" style="display:block;margin-bottom:16px"><div class="head" style="margin-bottom:8px"><div><h3 style="margin:0">Upload forecast sheet</h3><p class="muted" style="margin:2px 0 0;font-size:.88rem">The state dashboard's Forecast tab, downloaded as CSV. Replaces that state's 2027 forecast rows; booked checkmarks and 2027 event links stay. Nothing saves until you click the button.</p></div><button type="button" data-fcu="close">Close</button></div>
+   <div class="toolbar"><label class="upbtn" for="fcu-file">${FCU.file?"Change file":"Choose CSV file"}<input type="file" id="fcu-file" accept=".csv,text/csv" hidden></label>${FCU.file?`<span class="muted" style="font-size:.85rem">${esc(FCU.file)}</span>`:""}
+   ${FCU.rows?`${selHTML("fcu-home",FCU.home,[["","Which state's sheet?"],["PA","PA (includes WV rows)"],["NY","NY"],["NJ","NJ"],["NE","New England"]],"Sheet")}<button type="button" data-fcu="preview"${FCU.home?"":" disabled"}>Preview</button>`:""}</div>
+   ${FCU.msg?`<p class="${/^Saved/.test(FCU.msg)?"":"err-msg"}" style="margin:8px 0 0">${esc(FCU.msg)}</p>`:""}${prev}</div>`}
+
 function vForecast(){
   const all=fcRows(), meta=S.fc27meta||{};
-  if(!all.length)return `<div class="head"><div><h2>2027 Forecast</h2><p>${waiting("events")?"Loading the forecast…":"No forecast loaded yet. Send Claude the PA Dashboard forecast CSV to load it."}</p></div></div>`;
+  if(!all.length)return fcuPanel()+`<div class="head"><div><h2>2027 Forecast</h2><p>${waiting("events")?"Loading the forecast…":"No forecast loaded yet. Send Claude the PA Dashboard forecast CSV to load it."}</p></div></div>`;
   const F={b:UI.fcBrand||"",m:UI.fcMonth||"",s:REG_OK(UI.fcState||""),st:UI.fcStatus||""};
   const rAll=all.filter(r=>regMatch(r.state,F.s));
   let list=rAll;
@@ -739,8 +800,8 @@ function vForecast(){
       </div></td></tr>`}
   });
   const fl=[F.b&&F.b,F.m!==""&&FC_MONL[+F.m],F.s&&REG_NAME(F.s),F.st&&({booked:"Booked",open:"Not booked",overdue:"Overdue to book",new:"New for 2027"})[F.st]].filter(Boolean);
-  return `<div class="head"><div><h2>2027 Forecast</h2><p>Forecasted participants and registration dollars for every 2027 event, compared with the same event in 2026. Click an event to see the details. Actuals fill in as 2027 events are linked.</p></div>
-    <div class="toolbar">${selHTML("fc-brand",F.b,[["","All brands"]].concat(FC_BRANDS.filter(b=>rAll.some(r=>r.brand===b))),"Event brand")}${selHTML("fc-month",F.m,[["","All months"]].concat(months.map(i=>[String(i),FC_MONL[i]])),"Month")}${selHTML("fc-state",F.s,REG_OPTS,"Region / state")}${selHTML("fc-status",F.st,[["","All events"],["booked","Booked"],["open","Not booked"],["overdue","Overdue to book"],["new","New for 2027"]],"Status")}<button class="primary" data-add="fc27"${canWrite&&db?"":" disabled"}>+ Add event</button></div></div>
+  return fcuPanel()+`<div class="head"><div><h2>2027 Forecast</h2><p>Forecasted participants and registration dollars for every 2027 event, compared with the same event in 2026. Click an event to see the details. Actuals fill in as 2027 events are linked.</p></div>
+    <div class="toolbar">${selHTML("fc-brand",F.b,[["","All brands"]].concat(FC_BRANDS.filter(b=>rAll.some(r=>r.brand===b))),"Event brand")}${selHTML("fc-month",F.m,[["","All months"]].concat(months.map(i=>[String(i),FC_MONL[i]])),"Month")}${selHTML("fc-state",F.s,REG_OPTS,"Region / state")}${selHTML("fc-status",F.st,[["","All events"],["booked","Booked"],["open","Not booked"],["overdue","Overdue to book"],["new","New for 2027"]],"Status")}<button type="button" data-fcu="open"${canWrite&&db?"":" disabled"}>⬆ Upload forecast sheet</button><button class="primary" data-add="fc27"${canWrite&&db?"":" disabled"}>+ Add event</button></div></div>
    ${fl.length?`<div class="filt-on"><span>Showing: ${esc(fl.join(" · "))} (${T.n} of ${all.length} events)</span><button type="button" class="small" data-fcclear="1">Clear filters</button></div>`:""}
    <div class="kpis">
     ${kpi("Forecast events",num(T.n),`${T.booked} booked on website · ${T.n-T.lyn} new for 2027`)}
@@ -1351,6 +1412,7 @@ window.addEventListener("hashchange",()=>setTab(location.hash.slice(1)));
 document.getElementById("tabs").addEventListener("click",e=>{const a=e.target.closest("a[data-tab]");if(a){e.preventDefault();try{history.replaceState(null,"","#"+a.dataset.tab)}catch(x){}setTab(a.dataset.tab,true);window.scrollTo(0,0)}});
 document.addEventListener("input",e=>{if(e.target.id==="tn-input")UI.tnDraft=e.target.value});
 document.addEventListener("click",async e=>{
+  {const fb=e.target.closest("[data-fcu]");if(fb){const a=fb.dataset.fcu;if(a==="open"){FCU.open=true;FCU.msg=""}else if(a==="close"){Object.assign(FCU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){FCU.plan=fcuPlan();FCU.msg=""}else if(a==="save"){await fcuSave();return}render();return}}
   {const ed=e.target.closest("[data-tnedit]");if(ed&&UI.profile){UI.toolEdit=UI.profile+":"+ed.dataset.tnedit;UI.tnDraft=null;render();setTimeout(()=>{const t=document.getElementById("tn-input");if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length)}},60);return}
    if(e.target.closest("[data-tncancel]")){UI.toolEdit=null;UI.tnDraft=null;render();return}
    const sv=e.target.closest("[data-tnsave]");if(sv&&UI.profile){const p=byId("players",UI.profile);if(!p||!db)return;const k=sv.dataset.tnsave,el=document.getElementById("tn-input");const txt=(el?el.value:(UI.tnDraft||"")).trim();
@@ -1448,6 +1510,8 @@ document.addEventListener("submit",async e=>{if(e.target.id!=="vid-link-form")re
   try{await saveVideos(p,(Array.isArray(p.videos)?p.videos:[]).concat({link:url,name:name||"Video link",addedAt:new Date().toISOString()}));upState.msg="Link added.";upState.err=false}catch(x){upState.msg="Couldn't save that link. Try again.";upState.err=true}render()});
 document.addEventListener("change",async e=>{
   const t=e.target,id=t.id;
+  if(id==="fcu-file"&&t.files&&t.files[0]){const f=t.files[0];try{FCU.rows=parseCSV(await f.text());FCU.file=f.name;FCU.home=fcuGuess(f.name);FCU.plan=null;FCU.msg=""}catch(x){FCU.msg="Couldn't read that file."}render();return}
+  if(id==="fcu-home"){FCU.home=t.value;FCU.plan=null;render();return}
   const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth","ev-state":"evState"};
   if(map[id]){UI[map[id]]=t.value;saveUI();render();return}
   if(id==="csv-file"&&t.files&&t.files[0]){const f=t.files[0];try{const txt=await f.text();CSVJ.rows=parseCSV(txt);CSVJ.file=f.name;CSVJ.plan=null;CSVJ.msg="";const ev=csvGuessEvent(f.name);if(ev){CSVJ.evId=ev.id;CSVJ.evName=ev.name;CSVJ.evDate=ev.date||""}else{CSVJ.evId="";CSVJ.evName="";CSVJ.evDate=""}}catch(err){CSVJ.msg="Couldn't read that file."}render();return}
