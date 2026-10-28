@@ -358,10 +358,10 @@ const isHome=p=>!p.state||HOME_STATES.includes(p.state);
 const NE_STATES=["CT","RI","NH","VT","ME","MA"];
 const RANK_STATES=["PA","WV","NY","NJ"].concat(NE_STATES);
 /* Financial filters (Overview, 2027 Forecast): whole Northeast, a region, or one state. */
-const REG_OPTS=[["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England"]];
+const REG_OPTS=[["PA","PA"],["NY","NY"],["NJ","NJ"],["NE","New England"]];
 const REG_OK=v=>REG_OPTS.some(x=>x[0]===v)?v:"PA";
-/* Each financial record belongs to exactly one state. Anything without a recognised single state (blank, "Nat.", "Reg") came from the PA sheet, so it counts as PA. */
-const finState=st=>{st=String(st||"").trim().toUpperCase();return ["PA","WV","NY","NJ"].includes(st)?st:NE_STATES.includes(st)?"NE":"PA"};
+/* Each financial record belongs to exactly one state. WV is part of PA. Anything without a recognised single state (blank, "Nat.", "Reg") came from the PA sheet, so it counts as PA. */
+const finState=st=>{st=String(st||"").trim().toUpperCase();return st==="WV"?"PA":["PA","NY","NJ"].includes(st)?st:NE_STATES.includes(st)?"NE":"PA"};
 const REG_NAME=v=>(REG_OPTS.find(x=>x[0]===v)||["",v])[1];
 function regMatch(st,f){return finState(st)===(REG_OK(f||"PA"))}
 const regionOf=st=>{st=st||"PA";return st==="PA"||st==="WV"?"PAWV":st==="NY"?"NY":st==="NJ"?"NJ":NE_STATES.includes(st)?"NE":null};
@@ -395,7 +395,7 @@ const FORMS={
   {k:"name",l:"Event name",t:"text",req:1,full:1},
   {k:"season",l:"Season",t:"number",def:2026},{k:"type",l:"Event type",t:"select",o:EVTYPES},
   {k:"date",l:"Date",t:"date"},{k:"status",l:"Status",t:"select",o:["Planned","Registration open","In progress","Completed","Canceled"]},
-  {k:"state",l:"State",t:"select",o:["PA","WV","Other"]},{k:"venue",l:"Venue",t:"text"},
+  {k:"state",l:"State",t:"select",o:["PA","WV","NY","NJ","CT","RI","NH","VT","ME","MA","Other"]},{k:"venue",l:"Venue",t:"text"},
   {h:"Registrations & revenue"},
   {k:"actualPlayers",l:"Registrations",t:"number"},{k:"checkedIn",l:"Players checked in",t:"number"},
   {k:"grossRevenue",l:"Gross revenue ($)",t:"number"},{k:"discounts",l:"Discounts ($)",t:"number"},
@@ -443,7 +443,7 @@ const FORMS={
  fc27:{title:"2027 forecast event",col:"settings",fields:[
   {k:"name",l:"Event name",t:"text",req:1,full:1},
   {k:"brand",l:"Event brand",t:"select",o:["Open ID","State Games","Scout Day","Invite Only","Rising Stars"]},{k:"month",l:"Month",t:"select",o:["","Jan.","Feb.","Mar.","Apr.","May","June","July","Aug.","Sept","Oct","Nov.","Dec."]},
-  {k:"state",l:"State",t:"text",sug:["PA","WV","NJ/NY/PA","Nat.","Reg"]},{k:"zip",l:"Location / zip code",t:"text"},
+  {k:"state",l:"State",t:"text",sug:["PA","WV","NY","NJ","CT","RI","NH","VT","ME","MA"]},{k:"zip",l:"Location / zip code",t:"text"},
   {k:"dateText",l:"Forecasted date (as shown, e.g. 6/14-6/15 or TBD)",t:"text"},{k:"date",l:"Date for sorting",t:"date"},
   {h:"Forecast"},
   {k:"players",l:"Forecast players",t:"number"},{k:"avg",l:"Forecasted avg ($)",t:"number"},
@@ -696,7 +696,7 @@ function fcSum(list){const T={n:list.length,p:0,t:0,ap:0,at:0,lyp:0,lyt:0,lyn:0,
     const ly=fcLY(r);if(ly){const c=calc(ly);T.lyp+=c.regs;T.lyt+=c.gross;T.lyn++}});return T}
 /* ---------- Forecast sheet upload: replaces one state's 2027 forecast with the rows on a dashboard Forecast CSV ---------- */
 const FCU={open:false,file:"",rows:null,home:"",plan:null,msg:"",busy:false};
-const fcuGuess=f=>{f=String(f||"").toLowerCase();return /pennsylvania|\bpa\b/.test(f)?"PA":/new york|\bny\b/.test(f)?"NY":/new jersey|\bnj\b/.test(f)?"NJ":/new england/.test(f)?"NE":/west virginia|\bwv\b/.test(f)?"WV":""};
+const fcuGuess=f=>{f=String(f||"").toLowerCase();return /pennsylvania|\bpa\b/.test(f)?"PA":/new york|\bny\b/.test(f)?"NY":/new jersey|\bnj\b/.test(f)?"NJ":/new england/.test(f)?"NE":/west virginia|\bwv\b/.test(f)?"PA":""};
 const fcKey=s=>String(s||"").toLowerCase().replace(/\s*\((pa|wv|ny|nj|ne) (allocation|forecast)\)\s*$/,"").replace(/^2027\s+/,"").replace(/[^a-z0-9]/g,"");
 const FC_ALIAS={pasummeridharrisburg:"pasummerid",pasummeridlancaster:"paopengameeast",pasummeridpittsburgharea:"paopengamewest",pafallgames:"pafallopengame"};
 const fcuMoney=v=>{const x=parseFloat(String(v||"").replace(/[$,\s]/g,""));return isFinite(x)?x:null};
