@@ -358,7 +358,8 @@ const isHome=p=>!p.state||HOME_STATES.includes(p.state);
 const NE_STATES=["CT","RI","NH","VT","ME","MA"];
 const RANK_STATES=["PA","WV","NY","NJ"].concat(NE_STATES);
 /* Financial filters (Overview, 2027 Forecast): whole Northeast, a region, or one state. */
-const REG_OPTS=[["","All Northeast"],["PAWV","PA + WV"],["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England (all)"],["CT","CT"],["RI","RI"],["NH","NH"],["VT","VT"],["ME","Maine"],["MA","MA"],["NATREG","National / regional events"]];
+const REG_OPTS=[["","All Northeast"],["PA","PA"],["WV","WV"],["NY","NY"],["NJ","NJ"],["NE","New England"]];
+const REG_OK=v=>REG_OPTS.some(x=>x[0]===v)?v:"";
 const REG_NAME=v=>(REG_OPTS.find(x=>x[0]===v)||["",v])[1];
 function regMatch(st,f){if(!f)return true;st=String(st||"PA").trim();const parts=st.split(/\s*\/\s*/).map(x=>x.toUpperCase());
   if(f==="NATREG")return parts.some(x=>/^(NAT\.?|NATIONAL|REG\.?|REGIONAL)$/.test(x));
@@ -616,7 +617,7 @@ function seasonEvents(season){return S.events.filter(e=>String(e.season)===Strin
 function totals(list){const T={events:list.length,regs:0,gross:0,disc:0,cred:0,rev:0,exp:0,paid:0,scout:0};
   list.forEach(e=>{const c=calc(e);if(e.type==="Scout Day")T.scout++;else T.paid++;if(c.actual){T.regs+=c.regs;T.gross+=c.gross;T.disc+=c.disc;T.cred+=c.cred;T.rev+=c.revenue;T.exp+=c.expenses}});return T}
 function vOverview(){
-  const ov=UI.ovRegion||"", ev=seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)), T=totals(ev), KA=S.kpi||{}, ss=String(UI.season), stK=st=>st==="PA"?KA[ss]:KA[ss+"-"+st.toLowerCase()];
+  const ov=REG_OK(UI.ovRegion||""), ev=seasonEvents(UI.season).filter(e=>regMatch(e.state,ov)), T=totals(ev), KA=S.kpi||{}, ss=String(UI.season), stK=st=>st==="PA"?KA[ss]:KA[ss+"-"+st.toLowerCase()];
   const K=(()=>{if(ov==="PA"||ov==="PAWV")return KA[ss]||{};if(ov&&ov.length===2)return stK(ov)||{};if(!ov){const parts=Object.keys(KA).filter(k=>k===ss||k.indexOf(ss+"-")===0).map(k=>KA[k]).filter(x=>has(x.uniqueCustomers));return parts.length?{uniqueCustomers:parts.reduce((a,x)=>a+Number(x.uniqueCustomers),0),multi:parts.length>1}:{}}return{}})();
   const kpi=(lab,val,sub)=>`<div class="kpi"><div class="lab">${lab}</div><div class="val">${val}</div><div class="sub">${sub||"&nbsp;"}</div></div>`;
   const td=todayISO();
@@ -695,7 +696,7 @@ function fcSum(list){const T={n:list.length,p:0,t:0,ap:0,at:0,lyp:0,lyt:0,lyn:0,
 function vForecast(){
   const all=fcRows(), meta=S.fc27meta||{};
   if(!all.length)return `<div class="head"><div><h2>2027 Forecast</h2><p>${waiting("events")?"Loading the forecast…":"No forecast loaded yet. Send Claude the PA Dashboard forecast CSV to load it."}</p></div></div>`;
-  const F={b:UI.fcBrand||"",m:UI.fcMonth||"",s:UI.fcState||"",st:UI.fcStatus||""};
+  const F={b:UI.fcBrand||"",m:UI.fcMonth||"",s:REG_OK(UI.fcState||""),st:UI.fcStatus||""};
   let list=all;
   if(F.b)list=list.filter(r=>r.brand===F.b);
   if(F.m!=="")list=list.filter(r=>String(fcMonIdx(r))===F.m);
