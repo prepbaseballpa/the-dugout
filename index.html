@@ -1060,6 +1060,100 @@ function gradePanelHTML(p){const g=gradeOf(p);if(!g.any&&!g.flags.length)return"
   return `<div class="panel"><div class="head" style="margin-bottom:6px"><h3 style="margin:0">Grades (20–80)</h3><span class="muted" style="font-size:.78rem">Best marks since ${fmtDate(g.cut)}</span></div>${h}
    ${fl.length?`<ul class="gflags">${fl.map(f=>`<li>${esc(f)}</li>`).join("")}</ul>`:""}
    <p class="muted" style="font-size:.78rem;margin:8px 0 0">Hit and Field come only from evaluator grades. Add them, plus any ± adjustments, under Edit info &amp; metrics.</p></div>`}
+/* ---------- Event CSV upload (PBR scouting-report export) → player profiles ---------- */
+const CSVJ={open:false,file:"",rows:null,H:null,evId:"",evName:"",evDate:"",plan:null,msg:"",busy:false,choice:{}};
+function parseCSV(text){const rows=[];let row=[],f="",q=false;for(let i=0;i<text.length;i++){const c=text[i];
+  if(q){if(c==='"'){if(text[i+1]==='"'){f+='"';i++}else q=false}else f+=c}
+  else if(c==='"')q=true;else if(c===","){row.push(f);f=""}else if(c==="\n"||c==="\r"){if(c==="\r"&&text[i+1]==="\n")i++;row.push(f);rows.push(row);row=[];f=""}else f+=c}
+  if(f!==""||row.length){row.push(f);rows.push(row)}return rows}
+const cNum=v=>{if(v==null)return null;const x=parseFloat(String(v).replace(/,/g,""));return isFinite(x)?x:null};
+const cNorm=s=>String(s||"").toLowerCase().replace(/[^a-z]/g,"");
+const cSchool=s=>cNorm(s).replace(/area|high|school|hs|shs|jshs|senior|the|sr/g,"");
+const cSlug=s=>String(s||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+function csvGuessEvent(fileName){const an=s=>String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");const fn=an(fileName).replace(/created.*$/,"");let best=null,score=0;
+  S.events.forEach(e=>{const k=an(e.name);if(k&&fn.includes(k)&&k.length>score){best=e;score=k.length}});return best}
+function csvPlan(){
+  const R=CSVJ.rows,EVENT=CSVJ.evName.trim(),DATE=CSVJ.evDate;
+  const hi=R.findIndex(r=>r.includes("Full Name")&&r.includes("Last"));if(hi<0)throw new Error("This doesn't look like a PBR scouting-report CSV (no 'Full Name' column).");
+  const H=R[hi],first={};H.forEach((h,i)=>{if(!(h in first))first[h]=i});
+  const HIGH=["exitVelo","evAvg","infVelo","ofVelo","cVelo","fbVelo"],LOW=["sixty","thirty","tenYd","popTime"];
+  const byName={};RAWP.forEach(p=>{(byName[cNorm(p.name)]=byName[cNorm(p.name)]||[]).push(p)});
+  const taken=new Set(RAWP.map(p=>p.id));
+  const out={updated:[],added:[],review:[],skipped:0};
+  R.slice(hi+1).forEach(r=>{const g=h=>h in first?String(r[first[h]]||"").trim():"";
+    const name=g("Full Name")||(g("First")+" "+g("Last")).trim();if(!name){out.skipped++;return}
+    const ft=g("Measured Feet"),inch=g("Measured Inches"),mw=g("Measured Weight");
+    const height=cNum(ft)?`${Math.trunc(cNum(ft))}-${String(cNum(inch)||0)}`:g("Ht.");
+    const weight=cNum(mw)?Math.round(cNum(mw)):(cNum(g("Wt."))?Math.round(cNum(g("Wt."))):null);
+    const pop=g("Pop Time"),popBest=pop?cNum(pop.split("-")[0]):null,sixty=cNum(g("Vald 60 yard"))||cNum(g("60"));
+    const rng=v=>v&&v!=="0"?v:"";
+    let m={event:EVENT,date:DATE,height,weight,tenYd:cNum(g("Vald 10 yard")),thirty:cNum(g("Vald 30 yard")),sixty,
+      evAvg:cNum(g("TM Avg EV")),evMax:cNum(g("TM Max EV")),maxDist:cNum(g("TM Max Dist")),gb:cNum(g("GB %")),ld:cNum(g("LD %")),fbPct:cNum(g("FB %")),sweetSpot:cNum(g("Sweet Spot %")),
+      infVelo:cNum(g("INF velo")),ofVelo:cNum(g("OF velo")),cVelo:cNum(g("C velo")),popTime:pop,
+      fbMax:cNum(g("FB Max")),fbRange:rng(g("FB velo")),fbSpin:cNum(g("FB spin AVG")),cbRange:rng(g("CB velo")),cbSpin:cNum(g("CB spin AVG")),
+      slRange:rng(g("SL velo")),slSpin:cNum(g("SL spin AVG")),chRange:rng(g("CH velo")),chSpin:cNum(g("CH spin AVG")),splRange:rng(g("SPLT Velo")),
+      ctRange:rng(g("Cutter velo")),vizualEdge:cNum(g("Vizual Edge")),bats:g("Bats"),throws:g("Throws")};
+    m=Object.fromEntries(Object.entries(m).filter(([k,v])=>v!==null&&v!==""));
+    let nw={height,weight,sixty,thirty:m.thirty,tenYd:m.tenYd,exitVelo:m.evMax,evAvg:m.evAvg,infVelo:m.infVelo,ofVelo:m.ofVelo,cVelo:m.cVelo,fbVelo:m.fbMax,popTime:popBest};
+    nw=Object.fromEntries(Object.entries(nw).filter(([k,v])=>v!==null&&v!==undefined&&v!==""));
+    const bt=(g("Bats")||g("Throws"))?g("Bats").slice(0,1)+"/"+g("Throws").slice(0,1):"";
+    const cls=g("Class"),school=g("School"),st=g("St")||"PA";
+    const cands=byName[cNorm(name)]||[];
+    const same=cands.filter(p=>String(p.gradYear)===cls).concat(cands.filter(p=>String(p.gradYear)!==cls&&cSchool(p.school)&&cSchool(p.school)===cSchool(school)));
+    const row={name,cls,school,state:st,m,nw,bt,pos:g("POS"),url:g("Full URL"),commitment:g("commitment")};
+    if(same.length){row.target=same[0].id;out.updated.push(row)}
+    else if(cands.length){row.cands=cands.map(p=>p.id);out.review.push(row)}
+    else{let id="ev"+(cls?cls.slice(-2):"xx")+"-"+cSlug(name);while(taken.has(id))id+="-2";taken.add(id);row.newId=id;out.added.push(row)}
+  });
+  return out}
+function csvApply(row,cur){ /* returns patch for an existing player */
+  const HIGH=["exitVelo","evAvg","infVelo","ofVelo","cVelo","fbVelo"],LOW=["sixty","thirty","tenYd","popTime"];
+  const upd={},imp=[];
+  Object.entries(row.nw).forEach(([k,v])=>{const old=cur[k],o=cNum(old);
+    if(HIGH.includes(k)){if(o==null||v>o){upd[k]=v;if(o!=null)imp.push(`${k} ${old}→${v}`)}}
+    else if(LOW.includes(k)){if(o==null||v<o){upd[k]=v;if(o!=null)imp.push(`${k} ${old}→${v}`)}}
+    else{const prev=(cur.eventMetrics||[]).filter(e=>e.date&&e[k]);if((old==null||old===""||!prev.length||prev.map(e=>e.date).sort().pop()<=row.m.date)&&String(old)!==String(v))upd[k]=v}});
+  const best=Object.assign({},cur.bestSrc||{});Object.keys(upd).forEach(k=>{if(HIGH.includes(k)||LOW.includes(k))best[k]=row.m.event});
+  if(JSON.stringify(best)!==JSON.stringify(cur.bestSrc||{}))upd.bestSrc=best;
+  upd.eventMetrics=(cur.eventMetrics||[]).filter(e=>e.event!==row.m.event&&!(e.date===row.m.date&&(e.source||e.src)==="PBR website")).concat([row.m]);
+  [["batsThrows",row.bt],["position",row.pos],["school",row.school]].forEach(([k,v])=>{if(v&&!cur[k])upd[k]=v});
+  if(!cur.pbrProfile&&row.url)upd.pbrProfile=row.url;
+  return {upd,imp}}
+function csvNewDoc(row){return Object.assign({name:row.name,gradYear:row.cls,state:row.state,position:row.pos,school:row.school,batsThrows:row.bt,commitment:row.commitment||"",notes:"",
+  source:row.m.event+" scouting report",pbrProfile:row.url,eventMetrics:[row.m],bestSrc:Object.fromEntries(Object.keys(row.nw).filter(k=>["exitVelo","evAvg","infVelo","ofVelo","cVelo","fbVelo","sixty","thirty","tenYd","popTime"].includes(k)).map(k=>[k,row.m.event])),createdAt:new Date().toISOString()},row.nw)}
+function csvPanel(){
+  if(!CSVJ.open)return"";
+  const evs=S.events.slice().sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
+  const P=CSVJ.plan,pl=id=>{const p=rawPlayer(id);return p?`${esc(p.name)} (${esc(p.gradYear||"?")}, ${esc(p.school||"no school")})`:esc(id)};
+  let prev="";
+  if(P){const imp=P.updated.map(r=>{const c=rawPlayer(r.target);return c?{r,x:csvApply(r,c)}:null}).filter(Boolean);
+    const better=imp.filter(o=>o.x.imp.length);
+    prev=`<div class="sec-gap"><p style="margin:0 0 8px"><b>${num(P.updated.length)}</b> existing players updated · <b>${num(P.added.length)}</b> new profiles · <b>${num(P.review.length)}</b> to review${P.skipped?` · ${P.skipped} blank rows skipped`:""}</p>
+     ${P.review.length?`<div class="panel" style="border-color:var(--amber);margin-bottom:10px"><h3>Review: same name, different class and school</h3><p class="muted" style="margin:0 0 6px;font-size:.85rem">Choose whether each is the same player as an existing profile or a different kid.</p>
+       ${P.review.map((r,i)=>`<label class="inline" style="margin:6px 0;text-transform:none;letter-spacing:0;font-size:.88rem;color:var(--ink)"><span><b>${esc(r.name)}</b> · ${esc(r.cls)} · ${esc(r.school)}</span><select data-csvrev="${i}"><option value="">Create a new profile (different player)</option>${r.cands.map(id=>`<option value="${esc(id)}"${CSVJ.choice[i]===id?" selected":""}>Same player as ${pl(id)}</option>`).join("")}</select></label>`).join("")}</div>`:""}
+     ${better.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${better.length} players set new best marks</b></summary><ul class="fc-list">${better.map(o=>`<li>${esc(o.r.name)}: ${esc(o.x.imp.join(", "))}</li>`).join("")}</ul></details>`:""}
+     ${P.added.length?`<details class="panel" style="margin-bottom:10px"><summary><b>${P.added.length} new profiles</b></summary><ul class="fc-list">${P.added.map(r=>`<li>${esc(r.name)} · ${esc(r.cls)} · ${esc(r.school)}${r.state&&!["PA","WV"].includes(r.state)?` · <b>${esc(r.state)}</b> (prospect only)`:""}</li>`).join("")}</ul></details>`:""}
+     <button class="primary" type="button" data-csv="save"${CSVJ.busy?" disabled":""}>${CSVJ.busy?"Saving…":`Save ${num(P.updated.length+P.added.length+P.review.length)} players to the database`}</button></div>`}
+  return `<div class="panel quick" style="display:block"><div class="head" style="margin-bottom:8px"><div><h3 style="margin:0">Upload event CSV</h3><p class="muted" style="margin:2px 0 0;font-size:.88rem">PBR scouting-report export. Updates existing players (keeping their best marks), creates profiles for new ones, and adds the event to each player's history. Nothing saves until you click Save.</p></div><button class="small" type="button" data-csv="close">Close</button></div>
+   <div class="toolbar"><label class="upbtn" for="csv-file">${CSVJ.file?"Change file":"Choose CSV file"}<input type="file" id="csv-file" accept=".csv,text/csv" hidden></label>${CSVJ.file?`<span class="muted" style="font-size:.85rem">${esc(CSVJ.file)} · ${num(Math.max(0,(CSVJ.rows||[]).length-2))} rows</span>`:""}</div>
+   ${CSVJ.rows?`<div class="toolbar" style="margin-top:10px">${selHTML("csv-ev",CSVJ.evId,[["","Pick the event…"]].concat(evs.map(e=>[e.id,`${e.name} (${fmtDate(e.date)})`])).concat([["__other","Other / not in Events"]]),"Event")}
+     ${CSVJ.evId==="__other"?`<label class="inline" for="csv-name">Event name<input id="csv-name" value="${esc(CSVJ.evName)}" placeholder="2027 PA Preseason ID: Central" style="min-width:240px"></label><label class="inline" for="csv-date">Date<input id="csv-date" type="date" value="${esc(CSVJ.evDate)}"></label>`:""}
+     <button type="button" data-csv="preview"${(CSVJ.evName&&CSVJ.evDate)||CSVJ.evId==="__other"?"":" disabled"}>Preview</button></div>`:""}
+   ${CSVJ.msg?`<p class="${/^Saved/.test(CSVJ.msg)?"":"err-msg"}" style="margin:8px 0 0">${esc(CSVJ.msg)}</p>`:""}${prev}</div>`}
+async function csvSave(){
+  const P=CSVJ.plan;if(!P||!db)return;CSVJ.busy=true;render();
+  const ops=[];
+  P.updated.forEach(r=>{const c=rawPlayer(r.target);if(c)ops.push(["update",r.target,Object.assign(csvApply(r,c).upd,{updatedAt:new Date().toISOString()})])});
+  const taken=new Set(RAWP.map(p=>p.id).concat(P.added.map(r=>r.newId)));
+  P.review.forEach((r,i)=>{const t=CSVJ.choice[i];if(t){const c=rawPlayer(t);if(c)ops.push(["update",t,Object.assign(csvApply(r,c).upd,{updatedAt:new Date().toISOString()})])}
+    else{let id="ev"+(r.cls?r.cls.slice(-2):"xx")+"-"+cSlug(r.name);while(taken.has(id))id+="-2";taken.add(id);const d=csvNewDoc(r);d.notes="Possible duplicate of another "+r.name+" profile. Merge or delete if same player.";ops.push(["set",id,d])}});
+  P.added.forEach(r=>ops.push(["set",r.newId,csvNewDoc(r)]));
+  try{
+    if(db.batch){for(let i=0;i<ops.length;i+=400){const b=db.batch();ops.slice(i,i+400).forEach(([op,id,d])=>op==="set"?b.set(db.collection("players").doc(id),d):b.update(db.collection("players").doc(id),d));await b.commit()}}
+    else{for(const [op,id,d] of ops)op==="set"?await db.collection("players").doc(id).set(d):await db.collection("players").doc(id).update(d)}
+    const n=ops.length,ev=CSVJ.evName;Object.assign(CSVJ,{rows:null,file:"",plan:null,choice:{},evId:"",evName:"",evDate:"",busy:false,msg:`Saved ${n} players from ${ev}. Grades are updated.`});render();
+  }catch(e){CSVJ.busy=false;CSVJ.msg="Save didn't finish: "+((e&&e.message)||e)+". Running it again is safe: players already saved just get updated, not duplicated.";render()}}
+
 const fuBtn=(p,big)=>`<button type="button" class="fu${p.followUp?" on":""}${big?" big":""}" data-fu="${esc(p.id)}" aria-pressed="${p.followUp?"true":"false"}" title="${p.followUp?`Flagged for follow-up${p.followUpBy?" by "+esc(p.followUpBy):""}. Click to clear.`:"Flag for follow-up"}"${canWrite&&db?"":" disabled"}>⚑${big?(p.followUp?" Following up":" Flag for follow-up"):""}</button>`;
 function vProspects(){
   if(UI.profile&&byId("players",UI.profile))return draftBar()+vProfile(byId("players",UI.profile));
@@ -1091,11 +1185,11 @@ function vProspects(){
     <td class="num">${p.fbVelo?esc(p.fbVelo):"—"}</td><td class="num">${p.exitVelo?esc(p.exitVelo):"—"}</td><td class="num">${p.sixty?Number(p.sixty).toFixed(2):"—"}</td><td class="num">${p.infVelo||p.ofVelo?esc(p.infVelo||p.ofVelo):"—"}</td>
     <td class="num">${nc(p.id)}</td><td class="num">${v}</td><td style="text-align:center">${fuBtn(p)}</td></tr>`}).join("");
   const all=S.players.slice().sort((a,b)=>String(a.name).localeCompare(String(b.name)));
-  return `<div class="panel quick"><div><h3 style="margin:0 0 2px">Add video, notes or metrics</h3><p class="muted" style="margin:0;font-size:.88rem">Pick any player, ranked or not, to open his profile. New player? Use Add prospect below.</p></div>
+  return csvPanel()+`<div class="panel quick"><div><h3 style="margin:0 0 2px">Add video, notes or metrics</h3><p class="muted" style="margin:0;font-size:.88rem">Pick any player, ranked or not, to open his profile. New player? Use Add prospect below.</p></div>
    <div class="toolbar"><label class="inline" for="pr-open">Open a player's profile<select id="pr-open"><option value="">Choose a player…</option>${all.map(p=>`<option value="${esc(p.id)}">${esc(p.name)} · ${esc(p.gradYear||"")}${isRanked(p)?" · #"+esc(p.rank):" · prospect"}</option>`).join("")}</select></label>
    </div></div>
    <div class="head"><div><h2>Prospects</h2><p>Every player in the database: ranked players and prospects you're tracking. ${num(list.length)} shown. Click a player to open his profile. Give a prospect a rank to add him to the Rankings tab.</p></div>
-   <div class="toolbar"><label class="inline" for="pr-q">Search<input id="pr-q" type="search" value="${esc(UI.prQ||"")}" placeholder="Name, school, position" style="min-width:180px"></label>${selHTML("pr-class",UI.prClass||"",[["","All classes"],"2027","2028","2029","2030","2031","2032"],"Class")}${selHTML("pr-state",UI.prState||"",[["","All states"],["home","PA + WV"]].concat(stateList().map(([st,c])=>[st,st+" ("+c+")"])),"State")}${selHTML("pr-rank",UI.prRank||"",[["","Ranked + unranked"],["ranked","Ranked only"],["unranked","All unranked"],["watch","Watch list"],["padd","Potential adds"],["other","Other prospects"],["followup","Follow-up flagged"]],"Show")}${selHTML("pr-sort",UI.prSort||"",[["","Rank (default)"],["overall","Overall grade, by class"],["ofp","Hitting OFP, by class"],["fb","Pitching grade, by class"],["cross","Cross-class OFP"]],"Sort")}<button class="primary" data-add="prospect"${canWrite&&db?"":" disabled"}>+ Add prospect</button></div></div>
+   <div class="toolbar"><label class="inline" for="pr-q">Search<input id="pr-q" type="search" value="${esc(UI.prQ||"")}" placeholder="Name, school, position" style="min-width:180px"></label>${selHTML("pr-class",UI.prClass||"",[["","All classes"],"2027","2028","2029","2030","2031","2032"],"Class")}${selHTML("pr-state",UI.prState||"",[["","All states"],["home","PA + WV"]].concat(stateList().map(([st,c])=>[st,st+" ("+c+")"])),"State")}${selHTML("pr-rank",UI.prRank||"",[["","Ranked + unranked"],["ranked","Ranked only"],["unranked","All unranked"],["watch","Watch list"],["padd","Potential adds"],["other","Other prospects"],["followup","Follow-up flagged"]],"Show")}${selHTML("pr-sort",UI.prSort||"",[["","Rank (default)"],["overall","Overall grade, by class"],["ofp","Hitting OFP, by class"],["fb","Pitching grade, by class"],["cross","Cross-class OFP"]],"Sort")}${!isPT()?`<button type="button" data-csv="open"${canWrite&&db?"":" disabled"}>⬆ Upload event CSV</button>`:""}<button class="primary" data-add="prospect"${canWrite&&db?"":" disabled"}>+ Add prospect</button></div></div>
    ${draftBar()}
    ${(()=>{const A=S.players,rk=A.filter(isRanked).length,wl=A.filter(p=>!isRanked(p)&&p.listTag==="Watch list").length,pa=A.filter(p=>!isRanked(p)&&p.listTag==="Potential add").length,ot=A.length-rk-wl-pa;
      const cell=(v,l,k)=>`<button type="button" class="trk${(UI.prRank||"")===k?" on":""}" data-prk="${k}"><b>${num(v)}</b><span>${l}</span></button>`;
@@ -1259,6 +1353,11 @@ document.addEventListener("click",async e=>{
     if(col==="prospect"){openForm("players",null,{gradYear:UI.prClass||"2027",state:(UI.prState&&UI.prState!=="home")?UI.prState:"PA"});return}
     if(col==="tasks"&&UI.taskEvent)preset.eventId=UI.taskEvent;
     openForm(col,null,preset);return}
+  const cb=t.closest("[data-csv]");if(cb){const a=cb.dataset.csv;
+    if(a==="open"){CSVJ.open=true;CSVJ.msg="";render();window.scrollTo(0,0);return}
+    if(a==="close"){Object.assign(CSVJ,{open:false,rows:null,file:"",plan:null,choice:{},msg:""});render();return}
+    if(a==="preview"){const ni=document.getElementById("csv-name"),di=document.getElementById("csv-date");if(ni)CSVJ.evName=ni.value;if(di)CSVJ.evDate=di.value;if(!CSVJ.evName.trim()||!CSVJ.evDate){CSVJ.msg="Enter the event name and date first.";render();return}try{CSVJ.plan=csvPlan();CSVJ.choice={};CSVJ.msg=""}catch(err){CSVJ.plan=null;CSVJ.msg=err.message}render();return}
+    if(a==="save"){await csvSave();return}}
   const fu=t.closest("[data-fu]");if(fu){e.stopPropagation();if(fu.disabled||!db)return;const p=byId("players",fu.dataset.fu);if(!p)return;const on=!p.followUp;
     fu.disabled=true;try{await db.collection("players").doc(p.id).update(on?{followUp:true,followUpBy:(typeof meName==="function"?meName():""),followUpAt:new Date().toISOString()}:{followUp:false});
       const r=rawPlayer(p.id);if(r)r.followUp=on;refreshPD()}catch(err){fu.disabled=false;alert(errText(err))}return}
@@ -1327,6 +1426,10 @@ document.addEventListener("change",async e=>{
   const t=e.target,id=t.id;
   const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth"};
   if(map[id]){UI[map[id]]=t.value;saveUI();render();return}
+  if(id==="csv-file"&&t.files&&t.files[0]){const f=t.files[0];try{const txt=await f.text();CSVJ.rows=parseCSV(txt);CSVJ.file=f.name;CSVJ.plan=null;CSVJ.msg="";const ev=csvGuessEvent(f.name);if(ev){CSVJ.evId=ev.id;CSVJ.evName=ev.name;CSVJ.evDate=ev.date||""}else{CSVJ.evId="";CSVJ.evName="";CSVJ.evDate=""}}catch(err){CSVJ.msg="Couldn't read that file."}render();return}
+  if(id==="csv-ev"){CSVJ.evId=t.value;CSVJ.plan=null;if(t.value&&t.value!=="__other"){const ev=byId("events",t.value);CSVJ.evName=ev?ev.name:"";CSVJ.evDate=ev?ev.date||"":""}else{CSVJ.evName="";CSVJ.evDate=""}render();return}
+  if(id==="csv-name"||id==="csv-date"){CSVJ[id==="csv-name"?"evName":"evDate"]=t.value;CSVJ.plan=null;render();return}
+  const rv=t.closest&&t.closest("[data-csvrev]");if(rv){CSVJ.choice[rv.dataset.csvrev]=t.value;return}
   if(id==="tk-mail"){MAILP.pref=t.value;try{localStorage.setItem("pbrMailPref",t.value)}catch(x){}render();return}
   if(id==="rk-ver"){if(t.value==="__new"){t.value=UI.rkVer||"";if(!db)return;try{await rkNewDraft()}catch(err){alert(errText(err))}return}UI.rkVer=t.value;saveUI();render();return}
   if(id==="rk-class"){UI.rkClass=t.value;UI.rkVer="";saveUI();render();return}
