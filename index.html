@@ -771,11 +771,11 @@ function fcuPlan(){
     if(nameCount[g(3).toLowerCase()]>1&&lastOpen&&H==="NY"){if(/piggy/i.test(name))name=`Rising Stars piggyback (${lastOpen})`;else if(/freshman free/i.test(name))name=`${name} (${lastOpen})`}
     const iso=fcuISO(fdate);
     sheet.push({name,brand,state,month:g(1),players:pl||0,avg:fcuMoney(g(9)),total,lyEvent:g(6),zip:g(7)?g(7).padStart(5,"0"):"",date:iso,dateText:iso?`${+iso.slice(5,7)}/${+iso.slice(8,10)}/${iso.slice(0,4)}`:(fdate||"TBD"),due:fcuMDY(g(14)),booked:/^true$/i.test(g(15))})});
-  {const cnt={};sheet.forEach(x=>{cnt[x.name]=(cnt[x.name]||0)+1});sheet.forEach(x=>{if(cnt[x.name]>1)x.name=`${x.name} (${x.date?fmtDate(x.date):x.dateText&&x.dateText!=="TBD"?x.dateText:x.month||"TBD"})`});const c2={};sheet.forEach(x=>{c2[x.name]=(c2[x.name]||0)+1;if(c2[x.name]>1)x.name+=` #${c2[x.name]}`})}
-  const live=(S.fc27||[]).filter(r=>finState(r.state)===H);const used=new Set();
+  {const cnt={};sheet.forEach(x=>{x.base=x.name;cnt[x.name]=(cnt[x.name]||0)+1});sheet.forEach(x=>{if(cnt[x.name]>1)x.name=`${x.name} (${x.date?fmtDate(x.date):x.dateText&&x.dateText!=="TBD"?x.dateText:x.month||"TBD"})`});const c2={};sheet.forEach(x=>{c2[x.name]=(c2[x.name]||0)+1;if(c2[x.name]>1)x.name+=` #${c2[x.name]}`})}
+  const live=(S.fc27||[]).filter(r=>finState(r.state)===H).sort((a,b)=>(b.eventId?2:0)+(b.booked?1:0)-((a.eventId?2:0)+(a.booked?1:0))||(a.removed?1:0)-(b.removed?1:0));const used=new Set();
   const find=k=>live.find(r=>!used.has(r.id)&&fcKey(r.name)===k);
   const updated=[],added=[];
-  sheet.forEach((s,i)=>{const k=fcKey(s.name);const m=find(k)||(FC_ALIAS[k]&&find(FC_ALIAS[k]));if(m){used.add(m.id);updated.push({id:m.id,s,old:m})}else added.push({s})});
+  sheet.forEach((s,i)=>{const k=fcKey(s.name);const m=find(k)||(FC_ALIAS[k]&&find(FC_ALIAS[k]))||(s.base!==s.name&&find(fcKey(s.base)));if(m){used.add(m.id);updated.push({id:m.id,s,old:m})}else added.push({s})});
   const hidden=live.filter(r=>!used.has(r.id)&&!r.removed);
   const tot={};sheet.forEach(s=>{const fk=finState(s.state),t=tot[fk]||(tot[fk]={n:0,p:0,t:0});t.n++;t.p+=s.players;t.t+=s.total});
   return{H,updated,added,hidden,keyDates,land,notC,skipped,tot}}
