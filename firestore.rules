@@ -28,5 +28,10 @@ service cloud.firestore {
     match /tasks/{id}        { allow read, write: if isStaff(); }
     match /notes/{id}        { allow read, write: if isStaff(); }
     match /availability/{id} { allow read, write: if isStaff(); }
+    // Activity log: everyone's app writes a line when they open it or change something; only owners can read or clear it.
+    match /activity/{id} {
+      allow create: if isStaff() && request.resource.data.email == email();
+      allow read, delete: if isOwner();
+    }
   }
 }

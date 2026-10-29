@@ -302,6 +302,7 @@ tr.mhead span{color:var(--band-muted);font-family:var(--f-data);font-size:.78rem
       <a href="#rankings" data-tab="rankings">Rankings</a>
       <a href="#prospects" data-tab="prospects">Prospects</a>
       <a href="#scouting" data-tab="scouting">Scouting Notes</a>
+      <a href="#activity" data-tab="activity" hidden>Activity</a>
     </nav>
   </div>
 </header>
@@ -1525,7 +1526,31 @@ async function setAvail(evId,status){
   try{if(cur&&cur.status===status)await db.collection("availability").doc(id).delete();
     else await db.collection("availability").doc(id).set({eventId:evId,staffId:me,status,updatedAt:new Date().toISOString()});}catch(e){}
 }
-const VIEWS={schedule:vSchedule,overview:vOverview,events:vEvents,forecast:vForecast,staff:vStaff,tasks:vTasks,rankings:vRankings,prospects:vProspects,scouting:vScouting};
+/* ---------- Activity log (owners only) ---------- */
+let IS_OWNER=false;
+const ACT_COL={players:"player",events:"event",settings:"forecast / setting",schedule:"schedule",staff:"staff member",tasks:"task",notes:"scouting note",availability:"availability"};
+const actName=a=>{const st=(S.staff||[]).find(x=>String(x.email||"").toLowerCase()===a.email);return st?st.name:(a.name||a.email)};
+const actWhen=iso=>{const d=new Date(iso);if(isNaN(d))return"";const s=(Date.now()-d)/1000;const rel=s<60?"just now":s<3600?Math.floor(s/60)+" min ago":s<86400?Math.floor(s/3600)+" hr ago":Math.floor(s/86400)+" d ago";return{rel,abs:d.toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"})}};
+const actWhat=a=>{const thing=ACT_COL[a.col]||a.col||"";const f=(a.fields||[]).filter(x=>x&&x!=="removed");
+  if(a.action==="open")return"Opened The Dugout";
+  if(a.action==="bulk")return `Saved ${a.count} ${thing}${a.count===1?"":"s"}: ${a.label||""}`;
+  if(a.action==="bulk-delete")return `Deleted ${a.count} ${thing}${a.count===1?"":"s"}: ${a.label||""}`;
+  if(a.action==="delete")return `Deleted ${thing} ${a.label||a.docId||""}`;
+  return `${a.action==="set"?"Saved":"Edited"} ${thing} ${a.label||a.docId||""}${f.length?` (${f.slice(0,6).join(", ")}${f.length>6?", …":""})`:""}`};
+function vActivity(){
+  if(!IS_OWNER)return `<div class="head"><div><h2>Activity</h2><p>Only the owner can see this page.</p></div></div>`;
+  const L=(S.activity||[]).slice().sort((a,b)=>String(b.at).localeCompare(String(a.at)));
+  const people=[...new Map(L.map(a=>[a.email,actName(a)])).entries()].sort((a,b)=>String(a[1]).localeCompare(String(b[1])));
+  let list=L;if(UI.actWho)list=list.filter(a=>a.email===UI.actWho);if(UI.actKind==="change")list=list.filter(a=>a.action!=="open");else if(UI.actKind==="open")list=list.filter(a=>a.action==="open");
+  const last={};L.forEach(a=>{if(!last[a.email])last[a.email]=a});
+  const rows=list.slice(0,400).map(a=>{const w=actWhen(a.at);return `<tr><td style="white-space:nowrap">${esc(w.rel)}<span class="sub">${esc(w.abs)}</span></td><td>${esc(actName(a))}<span class="sub">${esc(a.email)}</span></td><td>${esc(actWhat(a))}</td></tr>`}).join("");
+  return `<div class="head"><div><h2>Activity <span class="chip" style="font-size:.7rem;vertical-align:middle">Only you</span></h2><p>Who opened The Dugout and what they changed, newest first. Only owners can see this page; other staff don't see the tab. Quick edits to the same record within 20 seconds are grouped.</p></div>
+    <div class="toolbar">${selHTML("act-who",UI.actWho||"",[["","Everyone"]].concat(people),"Person")}${selHTML("act-kind",UI.actKind||"",[["","Everything"],["change","Changes only"],["open","Sign-ins only"]],"Show")}</div></div>
+   ${people.length?`<div class="panel" style="margin-bottom:16px"><h3>Last seen</h3><div class="tbl"><table><tbody>${Object.values(last).sort((a,b)=>String(b.at).localeCompare(String(a.at))).map(a=>{const w=actWhen(a.at);return `<tr class="click" data-actwho="${esc(a.email)}"><td>${esc(actName(a))}</td><td class="num">${esc(w.rel)}</td><td class="muted">${esc(actWhat(a))}</td></tr>`}).join("")}</tbody></table></div></div>`:""}
+   <div class="tbl"><table><thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead><tbody>${rows||`<tr><td colspan="3" class="empty">${loaded.activity?"No activity recorded yet. Entries appear as people open the app and make changes.":"Loading…"}</td></tr>`}</tbody></table></div>
+   ${list.length>400?`<p class="muted" style="font-size:.82rem">Showing the latest 400 of ${list.length}.</p>`:""}`}
+
+const VIEWS={activity:vActivity,schedule:vSchedule,overview:vOverview,events:vEvents,forecast:vForecast,staff:vStaff,tasks:vTasks,rankings:vRankings,prospects:vProspects,scouting:vScouting};
 
 const FT_ONLY=["overview","events","forecast"];
 const isPT=()=>isFull===false||UI.viewAs==="pt";
@@ -1547,7 +1572,7 @@ function render(){if(gated)return;
     const typing=ae&&(ae.tagName==="TEXTAREA"||(ae.tagName==="INPUT"&&/^(text|search|url|email|tel|)$/.test(ae.type)));
     const keep=typing?{v:ae.value,s:ae.selectionStart,e:ae.selectionEnd}:null;
     if(isPT()&&FT_ONLY.includes(UI.tab))UI.tab="schedule";
-    document.querySelectorAll("#tabs a").forEach(a=>{a.setAttribute("aria-current",a.dataset.tab===UI.tab?"page":"false");a.hidden=isPT()&&FT_ONLY.includes(a.dataset.tab)});
+    document.querySelectorAll("#tabs a").forEach(a=>{a.setAttribute("aria-current",a.dataset.tab===UI.tab?"page":"false");a.hidden=(isPT()&&FT_ONLY.includes(a.dataset.tab))||(a.dataset.tab==="activity"&&(!IS_OWNER||isPT()))});
     document.querySelectorAll("[data-viewas]").forEach(b=>b.setAttribute("aria-pressed",String((UI.viewAs||"ft")===b.dataset.viewas)));
     const lg=document.querySelector(".logo");if(lg)lg.setAttribute("href",isPT()?"#schedule":"#overview");
     banners();
@@ -1558,11 +1583,12 @@ function render(){if(gated)return;
 }
 
 /* ---------- interactions ---------- */
-function setTab(t,fromNav){if(!VIEWS[t])t=isPT()?"schedule":"overview";if(isPT()&&FT_ONLY.includes(t))t="schedule";if(fromNav&&t==="prospects")UI.profile="";UI.tab=t;saveUI();render()}
+function setTab(t,fromNav){if(!VIEWS[t]||(t==="activity"&&!IS_OWNER))t=isPT()?"schedule":"overview";if(isPT()&&FT_ONLY.includes(t))t="schedule";if(fromNav&&t==="prospects")UI.profile="";UI.tab=t;saveUI();render()}
 window.addEventListener("hashchange",()=>setTab(location.hash.slice(1)));
 document.getElementById("tabs").addEventListener("click",e=>{const a=e.target.closest("a[data-tab]");if(a){e.preventDefault();try{history.replaceState(null,"","#"+a.dataset.tab)}catch(x){}setTab(a.dataset.tab,true);window.scrollTo(0,0)}});
 document.addEventListener("input",e=>{if(e.target.id==="tn-input")UI.tnDraft=e.target.value});
 document.addEventListener("click",async e=>{
+  {const aw=e.target.closest("[data-actwho]");if(aw){UI.actWho=aw.dataset.actwho;saveUI();render();return}}
   {const rb=e.target.closest("[data-rku]");if(rb){const a=rb.dataset.rku;if(a==="open"){RKU.open=true;RKU.msg=""}else if(a==="close"){Object.assign(RKU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){RKU.plan=rkuPlan();RKU.msg=""}else if(a==="save"){await rkuSave();return}render();return}}
   {const df=e.target.closest("[data-dupfix]");if(df){await dupFix(df.dataset.dupfix);return}}
   {const kb=e.target.closest("[data-kpu]");if(kb){const a=kb.dataset.kpu;if(a==="open"){KPU.open=true;KPU.msg=""}else if(a==="close"){Object.assign(KPU,{open:false,file:"",rows:null,plan:null,msg:""})}else if(a==="preview"){KPU.plan=kpuPlan();KPU.msg=""}else if(a==="save"){await kpuSave();return}render();return}}
@@ -1670,7 +1696,7 @@ document.addEventListener("change",async e=>{
   if(id==="kpu-file"&&t.files&&t.files[0]){const f=t.files[0];try{KPU.rows=parseCSV(await f.text());KPU.file=f.name;KPU.home=kpuGuess(f.name,KPU.rows);KPU.plan=null;KPU.msg=""}catch(x){KPU.msg="Couldn't read that file."}render();return}
   if(id==="kpu-home"){KPU.home=t.value;KPU.plan=null;render();return}
   if(id==="fcu-home"){FCU.home=t.value;FCU.plan=null;render();return}
-  const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth","ev-state":"evState"};
+  const map={"ov-season":"season","ev-season":"evSeason","tk-status":"taskStatus","tk-who":"taskWho","tk-event":"taskEvent","rk-class":"rkClass","rk-state":"rkState","nt-player":"ntPlayer","act-who":"actWho","act-kind":"actKind","nt-scout":"ntScout","ev-type":"evType","ev-month":"evMonth","ev-state":"evState"};
   if(map[id]){UI[map[id]]=t.value;saveUI();render();return}
   if(id==="csv-file"&&t.files&&t.files[0]){const f=t.files[0];try{const txt=await f.text();CSVJ.rows=parseCSV(txt);CSVJ.file=f.name;CSVJ.plan=null;CSVJ.msg="";const ev=csvGuessEvent(f.name);if(ev){CSVJ.evId=ev.id;CSVJ.evName=ev.name;CSVJ.evDate=ev.date||""}else{CSVJ.evId="";CSVJ.evName="";CSVJ.evDate=""}}catch(err){CSVJ.msg="Couldn't read that file."}render();return}
   if(id==="csv-ev"){CSVJ.evId=t.value;CSVJ.plan=null;if(t.value&&t.value!=="__other"){const ev=byId("events",t.value);CSVJ.evName=ev?ev.name:"";CSVJ.evDate=ev?ev.date||"":""}else{CSVJ.evName="";CSVJ.evDate=""}render();return}
@@ -1704,6 +1730,33 @@ function saveFc(patch){
 /* ---------- boot ---------- */
 UI.tab=VIEWS[location.hash.slice(1)]?location.hash.slice(1):(VIEWS[UI.tab]?UI.tab:"overview");
 render();
+/* Activity log: every change made through the app is noted in "activity" (who, when, what). Only owners can read it. */
+function installActivityLog(fs,email){
+  const me=String(email||"").toLowerCase(),SKIP=["activity","access"],QUIET=["updatedAt","updatedBy","createdAt","rankedAt","source","rankSource"];
+  const who=()=>{const s=(S.staff||[]).find(x=>String(x.email||"").toLowerCase()===me);return s?s.name:me};
+  const label=(c,id,d)=>{if(d&&typeof d==="object"&&(d.name||d.title))return String(d.name||d.title);const L=c==="players"?RAWP:c==="settings"?(S.fc27||[]).concat(S.rkDrafts||[]):(S[c]||[]);const x=(L||[]).find(r=>r.id===id);return x?String(x.name||x.title||x.text||id):id};
+  const pend={};
+  const flush=k=>{const p=pend[k];if(!p)return;delete pend[k];clearTimeout(p.t);
+    fs.collection("activity").add({at:p.at,email:me,name:who(),action:p.action,col:p.col,docId:p.id,label:p.label,fields:[...p.fields].slice(0,25),count:p.count||1}).catch(()=>{})};
+  const note=(action,c,id,d,lab)=>{if(SKIP.includes(c))return;const k=c+"/"+id;const fields=d&&typeof d==="object"?Object.keys(d).filter(f=>!QUIET.includes(f)):[];
+    const p=pend[k];if(p&&p.action!=="delete"&&action!=="delete"){fields.forEach(f=>p.fields.add(f));p.at=new Date().toISOString();clearTimeout(p.t);p.t=setTimeout(()=>flush(k),20000);return}
+    if(p)flush(k);pend[k]={action,col:c,id,label:lab||label(c,id,d),fields:new Set(fields),at:new Date().toISOString()};pend[k].t=setTimeout(()=>flush(k),action==="delete"?0:20000)};
+  addEventListener("pagehide",()=>Object.keys(pend).forEach(flush));
+  const ref0=fs.collection("activity").doc("_probe"),DR=Object.getPrototypeOf(ref0);
+  if(DR&&DR!==Object.prototype&&!DR.__logged){DR.__logged=true;
+    [["set","set"],["update","update"],["delete","delete"]].forEach(([m,act])=>{const o=DR[m];if(typeof o!=="function")return;
+      DR[m]=function(...a){const c=this.parent&&this.parent.id,id=this.id;let lab="";try{if(!SKIP.includes(c))lab=label(c,id,a[0])}catch(e){}const r=o.apply(this,a);
+        Promise.resolve(r).then(()=>{note(act==="set"&&a[1]&&a[1].merge?"update":act,c,id,a[0],lab)},()=>{});return r}})}
+  const B=Object.getPrototypeOf(fs.batch());
+  if(B&&B!==Object.prototype&&!B.__logged){B.__logged=true;
+    ["set","update","delete"].forEach(m=>{const o=B[m];if(typeof o!=="function")return;B[m]=function(ref,...a){(this.__ops=this.__ops||[]).push([m,ref&&ref.parent&&ref.parent.id,ref&&ref.id,a[0]]);return o.call(this,ref,...a)}});
+    const oc=B.commit;B.commit=function(...a){const ops=this.__ops||[];const r=oc.apply(this,a);
+      Promise.resolve(r).then(()=>{const by={};ops.filter(o=>!SKIP.includes(o[1])).forEach(o=>{const k=o[1]+"|"+(o[0]==="delete"?"delete":"save");(by[k]=by[k]||[]).push(o)});
+        Object.entries(by).forEach(([k,L])=>{const [c,act]=k.split("|");const names=L.slice(0,8).map(o=>label(c,o[2],o[3]));
+          fs.collection("activity").add({at:new Date().toISOString(),email:me,name:who(),action:act==="delete"?"bulk-delete":"bulk",col:c,label:names.join(", ")+(L.length>8?` and ${L.length-8} more`:""),count:L.length,fields:[]}).catch(()=>{})})},()=>{});
+      return r}}
+  try{if(!sessionStorage.getItem("pbrOpened")){sessionStorage.setItem("pbrOpened","1");fs.collection("activity").add({at:new Date().toISOString(),email:me,name:who(),action:"open",col:"",label:"Opened The Dugout",count:1,fields:[]}).catch(()=>{})}}catch(e){}
+}
 function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.innerHTML=`<div class="gate">${html}</div>`}
 (async()=>{
   const sync=document.getElementById("sync");
@@ -1738,6 +1791,8 @@ function gate(html){gated=true;document.getElementById("tabs").hidden=true;view.
     started=true;gated=false;ME_EMAIL=email;setTimeout(detectMail,0);
     document.getElementById("tabs").hidden=false;
     db=fs;dbState="on";canWrite=true;isFull=level==="Full";
+    IS_OWNER=owners.includes(email);try{installActivityLog(fs,email)}catch(e){}
+    if(IS_OWNER)fs.collection("activity").orderBy("at","desc").limit(2000).onSnapshot(snap=>{S.activity=snap.docs.map(d=>Object.assign({id:d.id},d.data()));loaded.activity=true;if(UI.tab==="activity")render()},()=>{loaded.activity=true});
     if(isFull)document.getElementById("viewas").hidden=false;
     if(!isFull&&FT_ONLY.includes(UI.tab)){UI.tab="schedule";try{history.replaceState(null,"","#schedule")}catch(x){}}
     try{const st=firebase.storage();assetsNS={
