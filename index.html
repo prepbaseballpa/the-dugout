@@ -40,7 +40,8 @@ body{font-family:var(--f-body);font-size:15px;line-height:1.45}
 header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--band);color:var(--band-ink);border-bottom:4px solid var(--red);box-shadow:0 2px 12px rgba(0,0,0,.25)}
 .brand{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-block:12px 6px}
 .logo{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--band-ink)}
-.logo-img{height:44px;width:auto;max-width:none;flex:none;display:block}
+.logo-img{height:48px;width:auto;max-width:none;flex:none;display:block}
+@media (max-width:520px){.logo-img{height:34px}.wm h1{font-size:1.5rem!important;white-space:nowrap}.wm small{font-size:.62rem;letter-spacing:.1em;white-space:nowrap}.logo{gap:8px}}
 .logo .wm{padding-left:12px;border-left:2px solid var(--red)}
 .logo .wm{display:flex;flex-direction:column;line-height:.9}
 .logo .wm small{font-family:var(--f-display);font-weight:600;font-size:.78rem;letter-spacing:.16em;color:var(--band-muted);text-transform:uppercase}
@@ -285,7 +286,7 @@ tr.mhead span{color:var(--band-muted);font-family:var(--f-data);font-size:.78rem
   <div class="wrap" style="padding-block:0">
     <div class="brand">
       <a class="logo" href="#overview" data-tab="overview" aria-label="The Dugout home">
-        <img class="logo-img" src="logo.png" alt="Prep Baseball logo" height="44" onerror="this.remove()">
+        <img class="logo-img" src="logo.png" alt="Prep Baseball" height="48" onerror="this.remove()">
         <div class="wm"><h1>The Dugout</h1><small>Prep Baseball Northeast</small></div>
       </a>
       <div class="brand-right"><button type="button" class="theme-tg" id="theme-tg"></button><div class="viewas" id="viewas" hidden role="group" aria-label="Preview the app as">
